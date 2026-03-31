@@ -160,6 +160,13 @@ from a global entry â€” even without explicit contradiction at promotion time â€
 flags this during curation. This is the closest analog to how humans gradually shift
 positions through accumulated experience rather than a single contradicting event.
 
+**Mechanism:** Each global promotion records its origin project. During `mnemosyne curate`,
+the system compares recent project-local promotions against existing global entries with
+overlapping tags. If 2+ recent promotions from different projects express a position that
+diverges from an existing global entry, the entry is flagged for reflective review. The
+exact divergence threshold and matching heuristics will be refined during implementation
+as real usage data accumulates.
+
 ---
 
 ## 4. The Rust CLI (`mnemosyne`)
@@ -172,7 +179,9 @@ positions through accumulated experience rather than a single contradicting even
 | `mnemosyne init --from <repo>` | Clone an existing knowledge repo into `~/.mnemosyne/` |
 | `mnemosyne query <terms>` | Search global knowledge by text and/or tags |
 | `mnemosyne query --context` | Infer context from current project, return relevant knowledge |
-| `mnemosyne promote` | Interactive promotion with contradiction detection |
+| `mnemosyne query --format <fmt>` | Output format: `markdown` (default), `json`, `plain` |
+| `mnemosyne query --max-tokens <n>` | Limit output to fit within a context budget |
+| `mnemosyne promote --tags <tags> --origin <project>` | Interactive promotion with contradiction detection |
 | `mnemosyne curate` | Reflective curation session |
 | `mnemosyne install claude-code` | Install/update the Claude Code plugin |
 | `mnemosyne status` | Summary: entry counts by axis, recent activity, flagged contradictions |
