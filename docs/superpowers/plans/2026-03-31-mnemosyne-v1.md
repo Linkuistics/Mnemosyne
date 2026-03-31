@@ -8,6 +8,17 @@
 
 **Tech Stack:** Rust (1.93.1), clap (CLI), serde/serde_yaml/serde_json (serialization), chrono (dates), ignore (directory walking), colored (terminal output), anyhow/thiserror (errors)
 
+## Session Continuation Prompt
+
+```
+Execute the Mnemosyne v1 implementation plan at docs/superpowers/plans/2026-03-31-mnemosyne-v1.md
+using subagent-driven development (superpowers:subagent-driven-development). The design spec
+is at docs/superpowers/specs/2026-03-31-mnemosyne-global-knowledge-system-design.md.
+
+Start from the first incomplete task (check the [ ] checkboxes). Use a fresh subagent per task,
+review between tasks. TDD throughout — tests before implementation.
+```
+
 ---
 
 ## File Map
