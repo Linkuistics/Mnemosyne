@@ -101,7 +101,7 @@ in the expected order. Explicit cleanup via cancellation tokens is safer.
 | `tags` | Cross-referencing mechanism; used for retrieval and contradiction detection |
 | `created` | When the entry was first created |
 | `last_validated` | Updated during curation when the developer confirms "still holds" |
-| `confidence` | `high` / `medium` / `low`; set by the developer during promotion |
+| `confidence` | `high` / `medium` / `low` / `prospective`; set by the developer during promotion. `prospective` indicates awareness rather than validated experience (from exploration sessions) |
 | `origins` | Provenance trail: which project, when, what context. Multiple origins if reinforced across projects |
 | `supersedes` | Links to entries this one replaced, preserving evolution history |
 
@@ -167,6 +167,90 @@ diverges from an existing global entry, the entry is flagged for reflective revi
 exact divergence threshold and matching heuristics will be refined during implementation
 as real usage data accumulates.
 
+### 3.4 Knowledge Exploration Sessions (`/explore-knowledge`)
+
+An interactive, Socratic dialogue between the LLM, the knowledge base, and the developer.
+Unlike curation (which reviews existing knowledge for validity), exploration actively
+seeks to **grow** the knowledge base by identifying gaps, researching new developments,
+and engaging the developer's expertise.
+
+**Three modes of exploration:**
+
+#### Gap Analysis
+
+The system analyzes the knowledge base for thin or missing areas relative to the
+developer's active domains:
+
+- "You have deep knowledge about Rust async patterns but nothing about error handling
+  strategies in async contexts. What's your approach?"
+- "Your macOS/AppKit knowledge covers UI controls but has no entries about accessibility.
+  Is that intentional or a gap worth filling?"
+- "You've worked with 4 Scheme-family languages but your knowledge base has no entries
+  comparing their FFI approaches. Want to capture your perspective?"
+
+The developer responds conversationally. The system distills their responses into
+candidate knowledge entries with appropriate tags, confidence levels, and axis placement.
+
+#### Horizon Scanning
+
+The system performs web searches in areas relevant to the developer's knowledge base,
+looking for:
+
+- New libraries, frameworks, or tools in domains the developer works in
+- Architectural approaches or patterns gaining traction in relevant communities
+- Breaking changes or deprecations affecting tools/languages in the knowledge base
+- Research papers or conference talks related to the developer's technique areas
+
+Findings are presented for discussion: "There's a new Rust error handling crate called
+`error-stack` that takes a different approach to the context pattern you've documented.
+Want to explore it?" The developer's assessment gets recorded as **prospective** knowledge
+— entries with `confidence: prospective` indicating they represent awareness of
+possibilities rather than validated experience.
+
+#### Open Questions
+
+The system identifies unresolved tensions or open questions within the knowledge base:
+
+- Entries where the developer chose "coexist" during contradiction resolution — are those
+  contexts still distinct, or has experience clarified which approach is better?
+- Entries with `confidence: low` or `confidence: prospective` — has the developer gained
+  enough experience to upgrade or discard them?
+- Clusters of related entries that might benefit from a synthesized overview
+
+**Prospective knowledge format:**
+
+```markdown
+---
+title: Error-Stack Crate for Structured Error Context
+tags: [rust, error-handling, libraries]
+created: 2026-04-01
+confidence: prospective
+source: horizon-scan
+origins:
+  - project: global
+    date: 2026-04-01
+    context: "Discovered during /explore-knowledge session"
+---
+
+## Assessment
+
+**2026-04-01:** 🟢 error-stack provides frame-based error context similar to
+backtraces but structured. Potentially superior to the anyhow + thiserror pattern
+for complex error chains. Not yet evaluated in a real project.
+
+**Status:** Prospective — to be validated through hands-on use.
+```
+
+Prospective entries are clearly distinguished from experience-validated knowledge.
+They participate in contradiction detection (a prospective entry might be superseded
+by real experience) and are surfaced during future exploration sessions for follow-up.
+
+**CLI and plugin integration:**
+
+- CLI: `mnemosyne explore` — runs the exploration session interactively in the terminal
+- Claude Code: `/explore-knowledge` skill — runs the session within the agent, with
+  access to web search and the current project context for richer discussion
+
 ---
 
 ## 4. The Rust CLI (`mnemosyne`)
@@ -183,6 +267,7 @@ as real usage data accumulates.
 | `mnemosyne query --max-tokens <n>` | Limit output to fit within a context budget |
 | `mnemosyne promote --tags <tags> --origin <project>` | Interactive promotion with contradiction detection |
 | `mnemosyne curate` | Reflective curation session |
+| `mnemosyne explore` | Interactive knowledge exploration session (gap analysis, horizon scanning) |
 | `mnemosyne install claude-code` | Install/update the Claude Code plugin |
 | `mnemosyne status` | Summary: entry counts by axis, recent activity, flagged contradictions |
 
@@ -197,6 +282,7 @@ mnemosyne/
 │   │   ├── query.rs
 │   │   ├── promote.rs
 │   │   ├── curate.rs
+│   │   ├── explore.rs
 │   │   ├── install.rs
 │   │   └── status.rs
 │   ├── knowledge/                 # Core knowledge management
@@ -264,7 +350,8 @@ adapters/claude-code/
 │   ├── create-plan.md             # Unchanged
 │   ├── setup-knowledge.md         # Updated: also runs mnemosyne init if needed
 │   ├── curate-global.md           # New: reflective global curation
-│   └── promote-global.md          # New: ad-hoc global promotion
+│   ├── promote-global.md          # New: ad-hoc global promotion
+│   └── explore-knowledge.md       # New: interactive knowledge exploration
 ├── references/
 │   ├── observational-memory-guide.md
 │   ├── plan-format.md
@@ -508,7 +595,7 @@ The cache is rebuilt automatically on first query after a clone or pull.
 - `~/.mnemosyne/` Git repo with hybrid axes + tag-based cross-referencing
 - Knowledge file format with full frontmatter (tags, confidence, origins, supersedes,
   last_validated)
-- Rust CLI: `init`, `query`, `query --context`, `promote`, `curate`,
+- Rust CLI: `init`, `query`, `query --context`, `promote`, `curate`, `explore`,
   `install claude-code`, `status`
 - Evidence-based knowledge evolution: contradiction detection, reflective curation,
   implicit divergence detection, supersession with history
