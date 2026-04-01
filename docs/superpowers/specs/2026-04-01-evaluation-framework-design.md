@@ -11,7 +11,7 @@ designs (Phases 3-4) that will be specified in detail once the foundation is pro
 
 ### Relationship to Existing Tests
 
-The 48 integration tests in `tests/` validate *correctness*: does the code do what the
+The 49 integration tests in `tests/` validate *correctness*: does the code do what the
 docstrings say? The evaluation framework validates *quality*: does the code do its job
 well enough? The two are complementary and independent. The existing test suite is not
 modified by this work.
