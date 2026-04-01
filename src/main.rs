@@ -182,8 +182,28 @@ fn main() -> anyhow::Result<()> {
             store.create_entry(axis, &filename, &mut entry)?;
             println!("\n✓ Promoted to knowledge/{}/{}", axis, filename);
         }
-        Commands::Curate => println!("curate: not yet implemented"),
-        Commands::Explore => println!("explore: not yet implemented"),
+        Commands::Curate => {
+            let mnemosyne_dir = dirs::home_dir()
+                .expect("Could not determine home directory")
+                .join(".mnemosyne");
+            let store = knowledge::store::KnowledgeStore::new(
+                mnemosyne_dir.join("knowledge"),
+                mnemosyne_dir.join("archive"),
+            );
+            let entries = store.load_all()?;
+            commands::curate::run_curate(&store, &entries)?;
+        }
+        Commands::Explore => {
+            let mnemosyne_dir = dirs::home_dir()
+                .expect("Could not determine home directory")
+                .join(".mnemosyne");
+            let store = knowledge::store::KnowledgeStore::new(
+                mnemosyne_dir.join("knowledge"),
+                mnemosyne_dir.join("archive"),
+            );
+            let entries = store.load_all()?;
+            commands::explore::run_explore(&store, &entries)?;
+        }
         Commands::Install { .. } => println!("install: not yet implemented"),
         Commands::Status => {
             let mnemosyne_dir = dirs::home_dir()
