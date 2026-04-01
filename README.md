@@ -1,8 +1,29 @@
 # Mnemosyne
 
+This project is about building long-term hierarchically organised, cross-linked
+global memory for LLMs, that can be added to any given LLM (e.g. Claude Code)
+project. The core idea is to use Mastra's Observational Memory concepts to
+simulate how senior human developers accumulate knowledge over time, and build
+up expertise in certain techniques, domains, tools, languages and specific
+codebases. This knowledge needs to be organised along multiple axes and
+carefully indexed, because it is intended to be global i.e. over all the
+projects a developer works on, and always growing over time. In an LLM context,
+it won't be possible to load it all, so the indexing and cross-referencing needs
+to be optimised for context preservation.
+
+From an implementation perspective this needs to be done outside of any given
+agent harness so it isn't tied to a particular product, model or architecture.
+
+Mnemosyne is the Greek Titaness of memory and remembrance, representing the
+preservation of knowledge and history in ancient oral culture. As the daughter
+of Uranus and Gaia and mother of the nine Muses by Zeus, she is a crucial deity
+of memory and the namesake for modern mnemonic devices.
+
+---
+
 Mnemosyne is a global developer knowledge system for LLM-driven development. It supplements per-project observational memory with a CLI-managed knowledge store at `~/.mnemosyne/` that accumulates transferable insights across every project you work on.
 
-In Greek mythology, Mnemosyne is the Titaness of memory and remembrance — the keeper of knowledge that shaped civilisation and the mother of the nine Muses. The name was chosen deliberately. Senior developers carry a form of tacit memory that makes them effective across unfamiliar codebases: patterns they've seen fail, idioms that hold up under pressure, tools that deliver on their promises. Mnemosyne externalises that memory so it can be shared with an LLM on every session, in every project.
+Senior developers carry a form of tacit memory that makes them effective across unfamiliar codebases: patterns they've seen fail, idioms that hold up under pressure, tools that deliver on their promises. Mnemosyne externalises that memory so it can be shared with an LLM on every session, in every project.
 
 The problem Mnemosyne solves is context loss. Each LLM conversation starts fresh. Per-project knowledge helps within a project, but the insight that "unbounded channels cause memory exhaustion under sustained load" is valuable in every async Rust project — not just the one where you first learned it. Mnemosyne captures those cross-project insights, organises them by axis (language, domain, tool, technique, project), and surfaces the relevant ones automatically when you begin work.
 
