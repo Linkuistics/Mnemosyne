@@ -1,0 +1,42 @@
+{
+  "name": "observational-memory",
+  "version": "2.0.0",
+  "description": "Observational memory, knowledge management, and integrated planning for LLM-driven projects — with Mnemosyne global knowledge integration",
+  "skills": [
+    {
+      "name": "begin-work",
+      "path": "skills/begin-work.md",
+      "description": "Start or continue implementation work with full knowledge context"
+    },
+    {
+      "name": "reflect",
+      "path": "skills/reflect.md",
+      "description": "Promote plan observations to the knowledge base during code review"
+    },
+    {
+      "name": "setup-knowledge",
+      "path": "skills/setup-knowledge.md",
+      "description": "Scaffold the observational memory knowledge system for a new project"
+    },
+    {
+      "name": "create-plan",
+      "path": "skills/create-plan.md",
+      "description": "Create a multi-session plan with built-in observational memory"
+    },
+    {
+      "name": "curate-global",
+      "path": "skills/curate-global.md",
+      "description": "Reflective curation of global knowledge — validate, supersede, or prune entries"
+    },
+    {
+      "name": "promote-global",
+      "path": "skills/promote-global.md",
+      "description": "Promote a learning to the global Mnemosyne knowledge base"
+    },
+    {
+      "name": "explore-knowledge",
+      "path": "skills/explore-knowledge.md",
+      "description": "Interactive knowledge exploration — gap analysis, horizon scanning, open questions"
+    }
+  ]
+}

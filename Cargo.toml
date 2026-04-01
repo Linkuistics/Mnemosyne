@@ -1,0 +1,23 @@
+[package]
+name = "mnemosyne"
+version = "0.1.0"
+edition = "2021"
+description = "Global developer knowledge system for LLM-driven development"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+colored = "3"
+dirs = "6"
+ignore = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
