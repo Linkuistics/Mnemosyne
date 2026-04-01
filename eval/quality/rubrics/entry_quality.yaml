@@ -1,0 +1,38 @@
+name: entry_quality
+description: Evaluates the quality of a Mnemosyne knowledge entry
+dimensions:
+  specificity:
+    description: "How specific and targeted is this entry?"
+    anchors:
+      5: "Identifies a specific technology, version, or scenario. A practitioner could apply this without further research."
+      4: "Identifies a specific area but requires some contextual knowledge."
+      3: "Reasonably specific but could apply to multiple situations."
+      2: "Vague. Could apply to many technologies or scenarios."
+      1: "Completely generic. No actionable specificity."
+
+  actionability:
+    description: "Could someone act on this knowledge?"
+    anchors:
+      5: "Contains a concrete recommendation, pattern, or constraint that directly guides implementation."
+      4: "Contains useful guidance but requires interpretation."
+      3: "Informative but not directly actionable."
+      2: "Mostly context or background."
+      1: "No actionable content."
+
+  provenance:
+    description: "Is the origin and evidence base clear?"
+    anchors:
+      5: "Multiple dated origins with specific project context. Clear evidence trail."
+      4: "At least one origin with context. Provenance is traceable."
+      3: "Origin present but context is thin."
+      2: "Origin field exists but is minimal or generic."
+      1: "No provenance information."
+
+  confidence_fit:
+    description: "Does the confidence level match the evidence?"
+    anchors:
+      5: "Confidence perfectly matches evidence depth (e.g. high confidence with multi-project validation)."
+      4: "Confidence is reasonable given the evidence."
+      3: "Confidence is slightly optimistic or conservative."
+      2: "Confidence is mismatched — e.g. high confidence from a single observation."
+      1: "Confidence is clearly wrong given the evidence."
