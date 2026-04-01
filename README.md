@@ -135,6 +135,7 @@ Knowledge in Mnemosyne is treated as living beliefs, not permanent records.
 - [Configuration](docs/configuration.md) — `config.yml` reference, language profiles, context mappings
 - [Plugin Development](docs/plugin-development.md) — how to build adapters for other editors/tools
 - [Research Sources](docs/research-sources.md) — annotated bibliography of the cognitive science underpinning the design
+- [Evaluation Strategy](docs/evaluation-strategy.md) — metrics, techniques, and framework for evaluating whether the system works
 
 ## Status
 
