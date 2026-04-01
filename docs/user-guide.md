@@ -22,7 +22,7 @@ This guide walks through everything you need to use Mnemosyne effectively, from 
 Mnemosyne is a Rust CLI. Build and install it from source:
 
 ```bash
-git clone https://github.com/your-org/mnemosyne
+git clone https://github.com/Linkuistics/Mnemosyne
 cd mnemosyne
 cargo install --path .
 ```
@@ -30,7 +30,7 @@ cargo install --path .
 Or install directly from the repository:
 
 ```bash
-cargo install --git https://github.com/your-org/mnemosyne
+cargo install --git https://github.com/Linkuistics/Mnemosyne
 ```
 
 Verify the installation:
