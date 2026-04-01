@@ -54,7 +54,7 @@ Most retrieval systems settle for intrinsic evaluation because extrinsic evaluat
 
 **What it validates:** The mechanical properties of the system — parsing, storage, search, matching, and detection work as specified.
 
-**Current state:** 48 integration tests across 14 test modules cover this tier. Tests use real file I/O with `tempfile` for isolation, fixture-based test data, and deterministic assertions.
+**Current state:** 49 integration tests across 14 test modules cover this tier. Tests use real file I/O with `tempfile` for isolation, fixture-based test data, and deterministic assertions.
 
 **What to expand:**
 
