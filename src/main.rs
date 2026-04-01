@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use mnemosyne::commands;
 use mnemosyne::config;
 use mnemosyne::context;
@@ -102,11 +103,99 @@ fn main() -> anyhow::Result<()> {
                 print!("{}", commands::query::run_query(&entries, &opts)?);
             }
         }
-        Commands::Promote { .. } => println!("promote: not yet implemented"),
+        Commands::Promote { tags, origin } => {
+            let mnemosyne_dir = dirs::home_dir()
+                .expect("Could not determine home directory")
+                .join(".mnemosyne");
+            let store = knowledge::store::KnowledgeStore::new(
+                mnemosyne_dir.join("knowledge"),
+                mnemosyne_dir.join("archive"),
+            );
+            let entries = store.load_all()?;
+
+            println!("{}", "Mnemosyne — Promote to Global Knowledge".bold());
+            println!();
+
+            println!("Title for this knowledge entry:");
+            let mut title = String::new();
+            std::io::stdin().read_line(&mut title)?;
+            let title = title.trim().to_string();
+
+            let tags: Vec<String> = if let Some(ref t) = tags {
+                t.split(',').map(|s| s.trim().to_string()).collect()
+            } else {
+                println!("Tags (comma-separated):");
+                let mut tag_input = String::new();
+                std::io::stdin().read_line(&mut tag_input)?;
+                tag_input.split(',').map(|s| s.trim().to_string()).collect()
+            };
+
+            let origin = origin.unwrap_or_else(|| {
+                println!("Origin project:");
+                let mut o = String::new();
+                std::io::stdin().read_line(&mut o).unwrap();
+                o.trim().to_string()
+            });
+
+            println!("Knowledge content (end with empty line):");
+            let mut body = String::new();
+            loop {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line)?;
+                if line.trim().is_empty() {
+                    break;
+                }
+                body.push_str(&line);
+            }
+
+            let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+            let new_entry = commands::promote::build_new_entry(
+                &title,
+                &tag_refs,
+                knowledge::entry::Confidence::High,
+                &origin,
+                "manual promotion",
+                &body,
+            );
+
+            let contradictions = commands::promote::check_contradictions(&entries, &new_entry);
+            if !contradictions.is_empty() {
+                println!("\n{}", "⚠ Potential contradictions detected:".yellow().bold());
+                for c in &contradictions {
+                    println!("  {} (overlap: {:.0}%)", c.existing.title, c.overlap_score * 100.0);
+                }
+                println!("\n[s]upersede  [c]oexist  [d]iscard  [r]efine");
+                let mut choice = String::new();
+                std::io::stdin().read_line(&mut choice)?;
+                match choice.trim().chars().next() {
+                    Some('d') => {
+                        println!("Discarded.");
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+
+            let axis = commands::promote::suggest_axis(&new_entry.tags);
+            let filename = commands::promote::title_to_filename(&title);
+            let mut entry = new_entry;
+            store.create_entry(axis, &filename, &mut entry)?;
+            println!("\n✓ Promoted to knowledge/{}/{}", axis, filename);
+        }
         Commands::Curate => println!("curate: not yet implemented"),
         Commands::Explore => println!("explore: not yet implemented"),
         Commands::Install { .. } => println!("install: not yet implemented"),
-        Commands::Status => println!("status: not yet implemented"),
+        Commands::Status => {
+            let mnemosyne_dir = dirs::home_dir()
+                .expect("Could not determine home directory")
+                .join(".mnemosyne");
+            let store = knowledge::store::KnowledgeStore::new(
+                mnemosyne_dir.join("knowledge"),
+                mnemosyne_dir.join("archive"),
+            );
+            let entries = store.load_all()?;
+            print!("{}", commands::status::run_status(&entries, &mnemosyne_dir)?);
+        }
     }
     Ok(())
 }
