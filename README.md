@@ -31,6 +31,7 @@ Cross-project knowledge lives in `~/.mnemosyne/`, a Git-backed store organised a
 ```
 ~/.mnemosyne/
 ├── config.yml
+├── .gitignore
 ├── knowledge/
 │   ├── languages/         # Rust, Swift, Racket, Haskell, Prolog, etc.
 │   ├── domains/           # macOS/AppKit, web, databases, concurrency, etc.
@@ -38,9 +39,7 @@ Cross-project knowledge lives in `~/.mnemosyne/`, a Git-backed store organised a
 │   ├── techniques/        # TDD, async patterns, error handling, etc.
 │   └── projects/          # Per-project summaries and cross-references
 ├── archive/               # Pruned entries (preserved, not deleted)
-├── cache/
-│   └── tag-index.json     # Derived index for fast retrieval
-└── docs/
+└── cache/                 # Derived data (gitignored)
 ```
 
 Knowledge flows upward: project-level observations are promoted to global knowledge when they prove useful across projects. The CLI provides commands for querying, promoting, curating, and evolving knowledge entries.
@@ -199,9 +198,9 @@ Version 0.1.0 -- initial implementation. The CLI, knowledge format, and Claude C
 
 Mnemosyne accumulates knowledge from working on all Linkuistics projects and makes it available across them:
 
-- **[APIAnyware-MacOS](https://github.com/linkuistics/APIAnyware-MacOS)** -- knowledge about FFI patterns, platform APIs, code generation
-- **[TestAnyware](https://github.com/linkuistics/TestAnyware)** -- knowledge about VM management, GUI testing strategies
-- **[*Pro IDEs](https://github.com/linkuistics)** -- knowledge about language-specific idioms and tooling
+- **[APIAnyware-MacOS](https://github.com/Linkuistics/APIAnyware-MacOS)** -- knowledge about FFI patterns, platform APIs, code generation
+- **[TestAnyware](https://github.com/Linkuistics/TestAnyware)** -- knowledge about VM management, GUI testing strategies
+- **[*Pro IDEs](https://github.com/Linkuistics)** -- knowledge about language-specific idioms and tooling
 
 ## License
 
