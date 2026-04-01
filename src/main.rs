@@ -204,7 +204,37 @@ fn main() -> anyhow::Result<()> {
             let entries = store.load_all()?;
             commands::explore::run_explore(&store, &entries)?;
         }
-        Commands::Install { .. } => println!("install: not yet implemented"),
+        Commands::Install { adapter } => {
+            match adapter.as_str() {
+                "claude-code" => {
+                    let plugin_target = dirs::home_dir()
+                        .expect("Could not determine home directory")
+                        .join(".claude/plugins/observational-memory");
+
+                    let exe_dir = std::env::current_exe()
+                        .ok()
+                        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+                    let source_candidates = [
+                        exe_dir.as_ref().map(|d| d.join("../adapters/claude-code")),
+                        Some(std::path::PathBuf::from("adapters/claude-code")),
+                    ];
+
+                    let source = source_candidates
+                        .iter()
+                        .flatten()
+                        .find(|p| p.exists())
+                        .ok_or_else(|| anyhow::anyhow!(
+                            "Could not find adapter files. Run from the Mnemosyne repo directory."
+                        ))?;
+
+                    commands::install::run_install_claude_code(source, &plugin_target)?;
+                    println!("✓ Claude Code plugin installed to {}", plugin_target.display());
+                }
+                other => {
+                    println!("Unknown adapter: {}. Available: claude-code", other);
+                }
+            }
+        }
         Commands::Status => {
             let mnemosyne_dir = dirs::home_dir()
                 .expect("Could not determine home directory")
