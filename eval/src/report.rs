@@ -19,6 +19,16 @@ struct JsonRetrieval {
     ndcg_at_k: f64,
     k: usize,
     query_count: usize,
+    per_query: Vec<JsonPerQuery>,
+}
+
+#[derive(Serialize)]
+struct JsonPerQuery {
+    query_id: String,
+    reciprocal_rank: f64,
+    precision_at_k: f64,
+    recall_at_k: f64,
+    ndcg_at_k: f64,
 }
 
 #[derive(Serialize)]
@@ -123,6 +133,13 @@ pub fn format_json(
             ndcg_at_k: retrieval.ndcg_at_k,
             k: retrieval.k,
             query_count: retrieval.query_count,
+            per_query: retrieval.per_query.iter().map(|q| JsonPerQuery {
+                query_id: q.query_id.clone(),
+                reciprocal_rank: q.reciprocal_rank,
+                precision_at_k: q.precision_at_k,
+                recall_at_k: q.recall_at_k,
+                ndcg_at_k: q.ndcg_at_k,
+            }).collect(),
         },
         contradiction: JsonContradiction {
             threshold: contradiction.threshold,
