@@ -1,0 +1,40 @@
+pairs:
+  - entry_a: languages-rust-async.md
+    entry_b: languages-rust-async-updated.md
+    is_contradiction: true
+    note: "Updated entry supersedes original on cancellation semantics — recommends CancellationToken over broadcast channels"
+
+  - entry_a: domains-web-caching.md
+    entry_b: domains-web-caching-aggressive.md
+    is_contradiction: true
+    note: "Contradictory caching TTL advice — conservative short TTLs vs aggressive immutable caching"
+
+  - entry_a: techniques-testing-integration.md
+    entry_b: techniques-testing-mocks.md
+    is_contradiction: true
+    note: "Opposing stances on whether to mock or integrate real databases for testing"
+
+  - entry_a: techniques-connection-pooling.md
+    entry_b: domains-database-connections.md
+    is_contradiction: false
+    note: "Complementary: pool sizing strategy vs connection lifecycle management — different aspects of the same system"
+
+  - entry_a: languages-rust-error-handling.md
+    entry_b: techniques-async-error-handling.md
+    is_contradiction: false
+    note: "Different scope — Rust-specific error type patterns vs async pipeline error propagation"
+
+  - entry_a: domains-security-auth.md
+    entry_b: projects-microservices-auth.md
+    is_contradiction: false
+    note: "General JWT security practices vs project-specific microservices auth architecture — complementary"
+
+  - entry_a: languages-python-async.md
+    entry_b: languages-python-typing.md
+    is_contradiction: false
+    note: "Near-miss: both Python, but asyncio pitfalls vs type annotation strategies — completely different topics"
+
+  - entry_a: techniques-caching-strategies.md
+    entry_b: tools-ci-caching.md
+    is_contradiction: false
+    note: "Near-miss: share caching tag but application-level caching vs CI build caching — different domains"

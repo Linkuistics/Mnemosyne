@@ -1,0 +1,206 @@
+queries:
+  - id: q01
+    text: "async error handling"
+    tags: [async, error-handling]
+    context: null
+    relevant:
+      - entry: techniques-async-error-handling.md
+        relevance: 2
+      - entry: languages-rust-error-handling.md
+        relevance: 1
+      - entry: languages-python-async.md
+        relevance: 1
+
+  - id: q02
+    text: "database performance"
+    tags: [database, performance]
+    context: null
+    relevant:
+      - entry: tools-postgres-indexing.md
+        relevance: 2
+      - entry: techniques-connection-pooling.md
+        relevance: 2
+      - entry: domains-database-connections.md
+        relevance: 1
+
+  - id: q03
+    text: "rust async patterns"
+    tags: [rust, async]
+    context: null
+    relevant:
+      - entry: languages-rust-async.md
+        relevance: 2
+      - entry: languages-rust-async-updated.md
+        relevance: 2
+      - entry: projects-apianyware-async.md
+        relevance: 1
+      - entry: techniques-async-error-handling.md
+        relevance: 1
+
+  - id: q04
+    text: "caching best practices"
+    tags: [caching]
+    context: null
+    relevant:
+      - entry: techniques-caching-strategies.md
+        relevance: 2
+      - entry: domains-web-caching.md
+        relevance: 2
+      - entry: domains-web-caching-aggressive.md
+        relevance: 1
+      - entry: tools-ci-caching.md
+        relevance: 1
+
+  - id: q05
+    text: "authentication and security"
+    tags: [authentication, security]
+    context: null
+    relevant:
+      - entry: domains-security-auth.md
+        relevance: 2
+      - entry: projects-microservices-auth.md
+        relevance: 1
+
+  - id: q06
+    text: "python data processing"
+    tags: [python, data]
+    context: "python-ml-pipeline"
+    relevant:
+      - entry: domains-ml-data-pipelines.md
+        relevance: 2
+      - entry: projects-ml-pipeline-v2.md
+        relevance: 1
+      - entry: languages-python-typing.md
+        relevance: 1
+
+  - id: q07
+    text: "container optimization"
+    tags: [docker, optimization]
+    context: null
+    relevant:
+      - entry: tools-docker-layers.md
+        relevance: 2
+
+  - id: q08
+    text: "testing strategies"
+    tags: [testing]
+    context: null
+    relevant:
+      - entry: techniques-testing-integration.md
+        relevance: 2
+      - entry: techniques-testing-mocks.md
+        relevance: 1
+      - entry: techniques-dependency-injection.md
+        relevance: 1
+
+  - id: q09
+    text: "distributed system resilience"
+    tags: [distributed, resilience]
+    context: null
+    relevant:
+      - entry: techniques-retry-backoff.md
+        relevance: 2
+      - entry: domains-distributed-systems.md
+        relevance: 1
+
+  - id: q10
+    text: "state management in frontend"
+    tags: [frontend, state-management]
+    context: "typescript-react"
+    relevant:
+      - entry: domains-frontend-state.md
+        relevance: 2
+      - entry: projects-react-dashboard.md
+        relevance: 1
+
+  - id: q11
+    text: "memory safety in Rust"
+    tags: [rust, memory]
+    context: null
+    relevant:
+      - entry: languages-rust-lifetimes.md
+        relevance: 2
+
+  - id: q12
+    text: "API rate limiting"
+    tags: [api, rate-limiting]
+    context: null
+    relevant:
+      - entry: techniques-rate-limiting.md
+        relevance: 2
+      - entry: domains-api-design.md
+        relevance: 1
+
+  - id: q13
+    text: "infrastructure as code"
+    tags: [terraform, infrastructure]
+    context: null
+    relevant:
+      - entry: tools-terraform-modules.md
+        relevance: 2
+
+  - id: q14
+    text: "type systems and generics"
+    tags: [type-system, generics]
+    context: null
+    relevant:
+      - entry: languages-typescript-generics.md
+        relevance: 2
+      - entry: languages-haskell-monads.md
+        relevance: 1
+      - entry: languages-python-typing.md
+        relevance: 1
+
+  - id: q15
+    text: "project migration challenges"
+    tags: [migration, legacy]
+    context: null
+    relevant:
+      - entry: projects-legacy-migration.md
+        relevance: 2
+      - entry: techniques-event-sourcing.md
+        relevance: 1
+
+  - id: q16
+    text: "git branching strategy"
+    tags: [git, branching]
+    context: null
+    relevant:
+      - entry: tools-git-workflows.md
+        relevance: 2
+
+  - id: q17
+    text: "Rust project structure"
+    tags: [cargo, rust]
+    context: null
+    relevant:
+      - entry: tools-cargo-workspaces.md
+        relevance: 2
+
+  - id: q18
+    text: "system observability"
+    tags: [observability, monitoring]
+    context: "rust-web-api"
+    relevant:
+      - entry: domains-observability.md
+        relevance: 2
+
+  - id: q19
+    text: "performance optimization techniques"
+    tags: [performance, optimization]
+    context: null
+    relevant:
+      - entry: techniques-zero-copy.md
+        relevance: 2
+      - entry: tools-postgres-indexing.md
+        relevance: 1
+      - entry: techniques-caching-strategies.md
+        relevance: 1
+
+  - id: q20
+    text: "debugging tools and techniques"
+    tags: [debugging]
+    context: null
+    relevant:
+      - entry: tools-vscode-debugging.md
+        relevance: 2

@@ -1,0 +1,3 @@
+languages: [rust]
+dependencies: [axum, serde, tokio]
+expected_tags: [api, async, concurrency, http, rust, serde, serialization, tokio, web]

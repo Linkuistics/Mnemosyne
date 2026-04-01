@@ -1,0 +1,3 @@
+languages: [python, rust]
+dependencies: [pyo3, serde]
+expected_tags: [pyo3, python, rust, serde, serialization]
