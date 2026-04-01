@@ -1,6 +1,6 @@
+use mnemosyne::commands::init::run_init;
 use std::fs;
 use tempfile::TempDir;
-use mnemosyne::commands::init::run_init;
 
 #[test]
 fn test_init_creates_directory_structure() {

@@ -25,7 +25,9 @@ context_mappings:
     assert_eq!(config.language_profiles["rust"].markers, vec!["Cargo.toml"]);
     assert_eq!(config.language_profiles["rust"].extensions, vec![".rs"]);
     assert_eq!(
-        config.language_profiles["rust"].dependency_parser.as_deref(),
+        config.language_profiles["rust"]
+            .dependency_parser
+            .as_deref(),
         Some("cargo")
     );
     assert!(config.context_mappings.contains_key("cargo_dependencies"));
@@ -58,8 +60,18 @@ fn test_load_config_returns_defaults_when_missing() {
 fn test_default_config_has_all_expected_languages() {
     let config = Config::default();
     let expected = [
-        "rust", "python", "haskell", "ocaml", "prolog", "mercury",
-        "scheme", "racket", "common-lisp", "smalltalk", "idris", "swift",
+        "rust",
+        "python",
+        "haskell",
+        "ocaml",
+        "prolog",
+        "mercury",
+        "scheme",
+        "racket",
+        "common-lisp",
+        "smalltalk",
+        "idris",
+        "swift",
     ];
     for lang in expected {
         assert!(

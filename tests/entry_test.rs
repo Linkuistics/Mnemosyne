@@ -1,4 +1,4 @@
-use mnemosyne::knowledge::entry::{Entry, Confidence, Origin};
+use mnemosyne::knowledge::entry::{Confidence, Entry, Origin};
 
 #[test]
 fn test_parse_entry_from_markdown() {

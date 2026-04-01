@@ -135,10 +135,10 @@ impl<'a> ProjectDetector<'a> {
                 continue;
             }
             if in_deps {
-                let clean =
-                    trimmed.trim_matches(|c: char| c == '"' || c == '\'' || c == ',');
-                if let Some(name) =
-                    clean.split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_').next()
+                let clean = trimmed.trim_matches(|c: char| c == '"' || c == '\'' || c == ',');
+                if let Some(name) = clean
+                    .split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_')
+                    .next()
                 {
                     let name = name.trim();
                     if !name.is_empty() {

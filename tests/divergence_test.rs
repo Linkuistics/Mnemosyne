@@ -29,13 +29,11 @@ fn make_entry_with_origins(title: &str, tags: &[&str], origins: Vec<(&str, &str)
 
 #[test]
 fn test_detect_divergence_multiple_projects() {
-    let global = vec![
-        make_entry_with_origins(
-            "Prefer integration tests",
-            &["testing", "database"],
-            vec![("project-a", "2026-01-01")],
-        ),
-    ];
+    let global = vec![make_entry_with_origins(
+        "Prefer integration tests",
+        &["testing", "database"],
+        vec![("project-a", "2026-01-01")],
+    )];
 
     let recent = vec![
         make_entry_with_origins(
@@ -60,21 +58,17 @@ fn test_detect_divergence_multiple_projects() {
 
 #[test]
 fn test_no_divergence_single_project() {
-    let global = vec![
-        make_entry_with_origins(
-            "Prefer integration tests",
-            &["testing", "database"],
-            vec![("project-a", "2026-01-01")],
-        ),
-    ];
+    let global = vec![make_entry_with_origins(
+        "Prefer integration tests",
+        &["testing", "database"],
+        vec![("project-a", "2026-01-01")],
+    )];
 
-    let recent = vec![
-        make_entry_with_origins(
-            "Unit tests approach",
-            &["testing", "database"],
-            vec![("project-b", "2026-03-15")],
-        ),
-    ];
+    let recent = vec![make_entry_with_origins(
+        "Unit tests approach",
+        &["testing", "database"],
+        vec![("project-b", "2026-03-15")],
+    )];
 
     let detector = DivergenceDetector::new(0.5, 2);
     let flagged = detector.detect(&global, &recent);

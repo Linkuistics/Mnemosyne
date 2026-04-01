@@ -4,8 +4,7 @@ use std::path::Path;
 
 /// Install the Claude Code adapter plugin.
 pub fn run_install_claude_code(source: &Path, target: &Path) -> Result<()> {
-    fs::create_dir_all(target)
-        .with_context(|| format!("Failed to create {}", target.display()))?;
+    fs::create_dir_all(target).with_context(|| format!("Failed to create {}", target.display()))?;
 
     copy_dir_recursive(source, target)?;
 

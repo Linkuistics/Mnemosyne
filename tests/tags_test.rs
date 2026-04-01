@@ -24,7 +24,12 @@ fn test_overlap_score_normalized() {
 
 #[test]
 fn test_overlap_score_partial() {
-    let a = vec!["rust".into(), "async".into(), "tokio".into(), "networking".into()];
+    let a = vec![
+        "rust".into(),
+        "async".into(),
+        "tokio".into(),
+        "networking".into(),
+    ];
     let b = vec!["rust".into(), "async".into()];
     // 2 overlapping out of 4 unique total = 0.5
     let score = TagMatcher::overlap_score(&a, &b);

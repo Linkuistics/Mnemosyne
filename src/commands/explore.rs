@@ -28,7 +28,10 @@ pub fn run_explore(store: &KnowledgeStore, entries: &[Entry]) -> Result<()> {
         .collect();
 
     if !open.is_empty() {
-        println!("{}\n", "Open Questions / Prospective Knowledge".bold().underline());
+        println!(
+            "{}\n",
+            "Open Questions / Prospective Knowledge".bold().underline()
+        );
         for entry in &open {
             let label = match entry.confidence {
                 Confidence::Prospective => "prospective",
@@ -43,7 +46,12 @@ pub fn run_explore(store: &KnowledgeStore, entries: &[Entry]) -> Result<()> {
     // 3. Tag clusters
     let clusters = find_tag_clusters(entries);
     if !clusters.is_empty() {
-        println!("{}\n", "Tag Clusters (may benefit from synthesis)".bold().underline());
+        println!(
+            "{}\n",
+            "Tag Clusters (may benefit from synthesis)"
+                .bold()
+                .underline()
+        );
         for (tags, count) in &clusters {
             println!("  • {} — {} entries", tags, count);
         }

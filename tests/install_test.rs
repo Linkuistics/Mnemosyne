@@ -10,7 +10,11 @@ fn test_install_claude_code_copies_plugin() {
 
     fs::create_dir_all(source.join("skills")).unwrap();
     fs::create_dir_all(source.join("references")).unwrap();
-    fs::write(source.join("plugin.json"), r#"{"name": "observational-memory"}"#).unwrap();
+    fs::write(
+        source.join("plugin.json"),
+        r#"{"name": "observational-memory"}"#,
+    )
+    .unwrap();
     fs::write(source.join("skills/begin-work.md"), "# begin-work skill").unwrap();
     fs::write(source.join("references/guide.md"), "# guide").unwrap();
 
@@ -28,7 +32,11 @@ fn test_install_preserves_existing_project_skills() {
     let target = tmp.path().join("plugins/observational-memory");
 
     fs::create_dir_all(source.join("skills")).unwrap();
-    fs::write(source.join("plugin.json"), r#"{"name": "observational-memory"}"#).unwrap();
+    fs::write(
+        source.join("plugin.json"),
+        r#"{"name": "observational-memory"}"#,
+    )
+    .unwrap();
     fs::write(source.join("skills/begin-work.md"), "# updated begin-work").unwrap();
 
     fs::create_dir_all(target.join("skills")).unwrap();

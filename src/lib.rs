@@ -1,5 +1,5 @@
-pub mod config;
-pub mod knowledge;
-pub mod evolution;
-pub mod context;
 pub mod commands;
+pub mod config;
+pub mod context;
+pub mod evolution;
+pub mod knowledge;

@@ -23,10 +23,16 @@ fn make_entry(title: &str, tags: &[&str], project: &str) -> Entry {
 
 #[test]
 fn test_detect_contradiction_high_overlap() {
-    let existing = vec![
-        make_entry("Use unbounded channels", &["rust", "async", "channels"], "project-a"),
-    ];
-    let new_entry = make_entry("Use bounded channels", &["rust", "async", "channels"], "project-b");
+    let existing = vec![make_entry(
+        "Use unbounded channels",
+        &["rust", "async", "channels"],
+        "project-a",
+    )];
+    let new_entry = make_entry(
+        "Use bounded channels",
+        &["rust", "async", "channels"],
+        "project-b",
+    );
 
     let detector = ContradictionDetector::new(0.5);
     let results = detector.detect(&existing, &new_entry);
@@ -37,9 +43,11 @@ fn test_detect_contradiction_high_overlap() {
 
 #[test]
 fn test_no_contradiction_low_overlap() {
-    let existing = vec![
-        make_entry("Rust patterns", &["rust", "patterns"], "project-a"),
-    ];
+    let existing = vec![make_entry(
+        "Rust patterns",
+        &["rust", "patterns"],
+        "project-a",
+    )];
     let new_entry = make_entry("Python patterns", &["python", "patterns"], "project-b");
 
     let detector = ContradictionDetector::new(0.5);

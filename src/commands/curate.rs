@@ -37,7 +37,8 @@ pub fn run_curate(store: &KnowledgeStore, entries: &[Entry]) -> Result<()> {
     }
 
     // 2. Active areas
-    let mut active_tags: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut active_tags: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
     for entry in &recent {
         for tag in &entry.tags {
             *active_tags.entry(tag.clone()).or_insert(0) += 1;

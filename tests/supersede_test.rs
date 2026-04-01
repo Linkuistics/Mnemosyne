@@ -17,7 +17,8 @@ fn test_supersede_adds_section() {
             context: "initial work".to_string(),
         }],
         supersedes: vec![],
-        body: "## Use unbounded channels\n\n**2026-01-15:** Prefer unbounded for logging.".to_string(),
+        body: "## Use unbounded channels\n\n**2026-01-15:** Prefer unbounded for logging."
+            .to_string(),
         file_path: None,
     };
 

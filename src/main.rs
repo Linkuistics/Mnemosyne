@@ -66,7 +66,12 @@ fn main() -> anyhow::Result<()> {
             commands::init::run_init(&mnemosyne_dir, from.as_deref())?;
             println!("Mnemosyne initialized at {}", mnemosyne_dir.display());
         }
-        Commands::Query { terms, context, format, max_tokens } => {
+        Commands::Query {
+            terms,
+            context,
+            format,
+            max_tokens,
+        } => {
             let mnemosyne_dir = dirs::home_dir()
                 .expect("Could not determine home directory")
                 .join(".mnemosyne");
@@ -160,19 +165,23 @@ fn main() -> anyhow::Result<()> {
 
             let contradictions = commands::promote::check_contradictions(&entries, &new_entry);
             if !contradictions.is_empty() {
-                println!("\n{}", "⚠ Potential contradictions detected:".yellow().bold());
+                println!(
+                    "\n{}",
+                    "⚠ Potential contradictions detected:".yellow().bold()
+                );
                 for c in &contradictions {
-                    println!("  {} (overlap: {:.0}%)", c.existing.title, c.overlap_score * 100.0);
+                    println!(
+                        "  {} (overlap: {:.0}%)",
+                        c.existing.title,
+                        c.overlap_score * 100.0
+                    );
                 }
                 println!("\n[s]upersede  [c]oexist  [d]iscard  [r]efine");
                 let mut choice = String::new();
                 std::io::stdin().read_line(&mut choice)?;
-                match choice.trim().chars().next() {
-                    Some('d') => {
-                        println!("Discarded.");
-                        return Ok(());
-                    }
-                    _ => {}
+                if let Some('d') = choice.trim().chars().next() {
+                    println!("Discarded.");
+                    return Ok(());
                 }
             }
 
@@ -204,37 +213,40 @@ fn main() -> anyhow::Result<()> {
             let entries = store.load_all()?;
             commands::explore::run_explore(&store, &entries)?;
         }
-        Commands::Install { adapter } => {
-            match adapter.as_str() {
-                "claude-code" => {
-                    let plugin_target = dirs::home_dir()
-                        .expect("Could not determine home directory")
-                        .join(".claude/plugins/observational-memory");
+        Commands::Install { adapter } => match adapter.as_str() {
+            "claude-code" => {
+                let plugin_target = dirs::home_dir()
+                    .expect("Could not determine home directory")
+                    .join(".claude/plugins/observational-memory");
 
-                    let exe_dir = std::env::current_exe()
-                        .ok()
-                        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-                    let source_candidates = [
-                        exe_dir.as_ref().map(|d| d.join("../adapters/claude-code")),
-                        Some(std::path::PathBuf::from("adapters/claude-code")),
-                    ];
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+                let source_candidates = [
+                    exe_dir.as_ref().map(|d| d.join("../adapters/claude-code")),
+                    Some(std::path::PathBuf::from("adapters/claude-code")),
+                ];
 
-                    let source = source_candidates
-                        .iter()
-                        .flatten()
-                        .find(|p| p.exists())
-                        .ok_or_else(|| anyhow::anyhow!(
+                let source = source_candidates
+                    .iter()
+                    .flatten()
+                    .find(|p| p.exists())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
                             "Could not find adapter files. Run from the Mnemosyne repo directory."
-                        ))?;
+                        )
+                    })?;
 
-                    commands::install::run_install_claude_code(source, &plugin_target)?;
-                    println!("✓ Claude Code plugin installed to {}", plugin_target.display());
-                }
-                other => {
-                    println!("Unknown adapter: {}. Available: claude-code", other);
-                }
+                commands::install::run_install_claude_code(source, &plugin_target)?;
+                println!(
+                    "✓ Claude Code plugin installed to {}",
+                    plugin_target.display()
+                );
             }
-        }
+            other => {
+                println!("Unknown adapter: {}. Available: claude-code", other);
+            }
+        },
         Commands::Status => {
             let mnemosyne_dir = dirs::home_dir()
                 .expect("Could not determine home directory")
@@ -244,7 +256,10 @@ fn main() -> anyhow::Result<()> {
                 mnemosyne_dir.join("archive"),
             );
             let entries = store.load_all()?;
-            print!("{}", commands::status::run_status(&entries, &mnemosyne_dir)?);
+            print!(
+                "{}",
+                commands::status::run_status(&entries, &mnemosyne_dir)?
+            );
         }
     }
     Ok(())

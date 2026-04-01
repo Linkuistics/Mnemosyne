@@ -1,6 +1,6 @@
+use chrono::NaiveDate;
 use mnemosyne::knowledge::entry::{Confidence, Entry, Origin};
 use mnemosyne::knowledge::index::{FileIndex, KnowledgeIndex, Query};
-use chrono::NaiveDate;
 
 fn make_entry(title: &str, tags: &[&str], confidence: Confidence) -> Entry {
     Entry {
@@ -88,12 +88,20 @@ fn test_find_by_tags() {
 #[test]
 fn test_find_contradictions_by_tag_overlap() {
     let entries = vec![
-        make_entry("Use unbounded channels", &["rust", "async", "channels"], Confidence::High),
+        make_entry(
+            "Use unbounded channels",
+            &["rust", "async", "channels"],
+            Confidence::High,
+        ),
         make_entry("Other topic", &["python"], Confidence::High),
     ];
     let index = FileIndex::from_entries(entries);
 
-    let new_entry = make_entry("Use bounded channels", &["rust", "async", "channels"], Confidence::High);
+    let new_entry = make_entry(
+        "Use bounded channels",
+        &["rust", "async", "channels"],
+        Confidence::High,
+    );
     let contradictions = index.find_contradictions(&new_entry);
 
     assert_eq!(contradictions.len(), 1);

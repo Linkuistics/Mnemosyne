@@ -2,10 +2,20 @@ use mnemosyne::knowledge::store::KnowledgeStore;
 use std::fs;
 use tempfile::TempDir;
 
-fn create_test_entry(dir: &std::path::Path, subdir: &str, filename: &str, title: &str, tags: &[&str]) {
+fn create_test_entry(
+    dir: &std::path::Path,
+    subdir: &str,
+    filename: &str,
+    title: &str,
+    tags: &[&str],
+) {
     let path = dir.join(subdir);
     fs::create_dir_all(&path).unwrap();
-    let tag_str = tags.iter().map(|t| format!("\"{}\"", t)).collect::<Vec<_>>().join(", ");
+    let tag_str = tags
+        .iter()
+        .map(|t| format!("\"{}\"", t))
+        .collect::<Vec<_>>()
+        .join(", ");
     let content = format!(
         r#"---
 title: {title}
@@ -36,8 +46,20 @@ fn test_load_all_entries() {
     fs::create_dir_all(&knowledge).unwrap();
     fs::create_dir_all(&archive).unwrap();
 
-    create_test_entry(&knowledge, "languages", "rust.md", "Rust Patterns", &["rust"]);
-    create_test_entry(&knowledge, "tools", "cargo.md", "Cargo Tips", &["cargo", "rust"]);
+    create_test_entry(
+        &knowledge,
+        "languages",
+        "rust.md",
+        "Rust Patterns",
+        &["rust"],
+    );
+    create_test_entry(
+        &knowledge,
+        "tools",
+        "cargo.md",
+        "Cargo Tips",
+        &["cargo", "rust"],
+    );
 
     let store = KnowledgeStore::new(knowledge, archive);
     let entries = store.load_all().unwrap();
@@ -98,7 +120,9 @@ fn test_archive_entry() {
 
     let store = KnowledgeStore::new(knowledge.clone(), archive.clone());
     let entries = store.load_all().unwrap();
-    store.archive_entry(&entries[0], "No longer relevant").unwrap();
+    store
+        .archive_entry(&entries[0], "No longer relevant")
+        .unwrap();
 
     // Original file should be gone
     assert!(!knowledge.join("languages/rust.md").exists());

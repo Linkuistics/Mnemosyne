@@ -66,8 +66,7 @@ impl KnowledgeStore {
         }
 
         let content = entry.serialize();
-        fs::write(path, content)
-            .with_context(|| format!("Failed to write {}", path.display()))?;
+        fs::write(path, content).with_context(|| format!("Failed to write {}", path.display()))?;
         Ok(())
     }
 

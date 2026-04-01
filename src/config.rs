@@ -196,10 +196,7 @@ fn default_context_mappings() -> HashMap<String, HashMap<String, Vec<String>>> {
         "axum".into(),
         vec!["web".into(), "http".into(), "api".into()],
     );
-    cargo.insert(
-        "serde".into(),
-        vec!["serialization".into(), "serde".into()],
-    );
+    cargo.insert("serde".into(), vec!["serialization".into(), "serde".into()]);
     mappings.insert("cargo_dependencies".into(), cargo);
 
     mappings

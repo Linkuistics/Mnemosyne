@@ -41,7 +41,9 @@ fn test_promote_creates_file() {
         "Write tests first.",
     );
 
-    store.create_entry("techniques", "tdd-patterns.md", &mut entry).unwrap();
+    store
+        .create_entry("techniques", "tdd-patterns.md", &mut entry)
+        .unwrap();
 
     assert!(knowledge.join("techniques/tdd-patterns.md").exists());
 

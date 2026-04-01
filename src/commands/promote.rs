@@ -52,25 +52,46 @@ pub fn suggest_axis(tags: &[Tag]) -> &'static str {
     let tag_set: std::collections::HashSet<&str> = tags.iter().map(|t| t.as_str()).collect();
 
     let languages = [
-        "rust", "python", "haskell", "ocaml", "prolog", "mercury",
-        "scheme", "racket", "common-lisp", "smalltalk", "idris", "swift",
-        "javascript", "typescript", "go", "java", "c", "cpp",
+        "rust",
+        "python",
+        "haskell",
+        "ocaml",
+        "prolog",
+        "mercury",
+        "scheme",
+        "racket",
+        "common-lisp",
+        "smalltalk",
+        "idris",
+        "swift",
+        "javascript",
+        "typescript",
+        "go",
+        "java",
+        "c",
+        "cpp",
     ];
     if tag_set.iter().any(|t| languages.contains(t)) {
         return "languages";
     }
 
     let tools = [
-        "cargo", "git", "docker", "npm", "pip", "stack", "dune",
-        "xcode", "vscode", "neovim",
+        "cargo", "git", "docker", "npm", "pip", "stack", "dune", "xcode", "vscode", "neovim",
     ];
     if tag_set.iter().any(|t| tools.contains(t)) {
         return "tools";
     }
 
     let domains = [
-        "macos", "appkit", "web", "database", "networking", "cloud",
-        "mobile", "embedded", "api",
+        "macos",
+        "appkit",
+        "web",
+        "database",
+        "networking",
+        "cloud",
+        "mobile",
+        "embedded",
+        "api",
     ];
     if tag_set.iter().any(|t| domains.contains(t)) {
         return "domains";

@@ -47,10 +47,7 @@ fn create_fresh(dir: &Path) -> Result<()> {
     fs::write(dir.join(".gitignore"), gitignore)?;
 
     // Initialize git repo (best-effort; failure is non-fatal)
-    let git_result = Command::new("git")
-        .args(["init"])
-        .current_dir(dir)
-        .output();
+    let git_result = Command::new("git").args(["init"]).current_dir(dir).output();
 
     if let Ok(output) = git_result {
         if output.status.success() {
