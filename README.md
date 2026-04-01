@@ -137,9 +137,44 @@ Knowledge in Mnemosyne is treated as living beliefs, not permanent records.
 - [Research Sources](docs/research-sources.md) — annotated bibliography of the cognitive science underpinning the design
 - [Evaluation Strategy](docs/evaluation-strategy.md) — metrics, techniques, and framework for evaluating whether the system works
 
+## Evaluation
+
+Mnemosyne includes a quantitative evaluation framework (`eval/`) for measuring retrieval quality, contradiction detection accuracy, context detection coverage, and entry quality.
+
+### Rust Harness (`eval/`)
+
+A standalone binary that loads a benchmark corpus of 39 synthetic knowledge entries, 20 queries with graded relevance, 8 contradiction pairs, and 4 mock projects, then reports:
+
+- **Retrieval metrics** — MRR, Precision@k, Recall@k, nDCG@k
+- **Contradiction detection** — Precision, Recall, F1 with configurable threshold sweep
+- **Context detection** — Language, dependency, and tag mapping accuracy
+
+```bash
+cd eval && cargo run -- --verbose --sweep    # human-readable with threshold sweep
+cd eval && cargo run -- --json               # machine-readable JSON
+```
+
+### Python Quality Harness (`eval/quality/`)
+
+An LLM-as-judge harness that scores entries against a four-dimension rubric (specificity, actionability, provenance, confidence fit) using the Anthropic SDK, with two-pass variance reduction:
+
+```bash
+cd eval/quality
+PYTHONPATH=../.. python -m eval.quality.src.__main__ --single-pass --verbose
+```
+
+Includes automated structural completeness checks that require no API key.
+
+See [Evaluation Strategy](docs/evaluation-strategy.md) for the full methodology and research context.
+
 ## Status
 
-Version 0.1.0 — initial implementation. The CLI, knowledge format, and Claude Code plugin are functional. The `explore` command's horizon-scanning mode (web search integration) is planned for a future release.
+Version 0.1.0 — initial implementation. The CLI, knowledge format, and Claude Code plugin are functional. The evaluation framework (Phases 1-2) is complete. The `explore` command's horizon-scanning mode (web search integration) is planned for a future release.
+
+### TODO
+
+- **Evaluation Phase 3: Multi-Session Simulation** — Validate that knowledge accumulates correctly and transfers across projects over a simulated multi-session workflow. Requires designing a simulation that initialises a fresh store, runs 3-5 sessions across mock projects, and measures knowledge base state at each boundary. See the Phase 3 intent section in [the evaluation framework spec](docs/superpowers/specs/2026-04-01-evaluation-framework-design.md).
+- **Evaluation Phase 4: Controlled Impact Experiments** — A/B experimental harness demonstrating that Mnemosyne measurably improves AI assistant outcomes on coding tasks. Requires task design, sample size planning, and cost management for multi-run API experiments. See the Phase 4 intent section in the same spec.
 
 ## Related Projects
 
