@@ -3,7 +3,7 @@ name = "mnemosyne"
 version = "0.1.0"
 edition = "2021"
 description = "Global developer knowledge system for LLM-driven development"
-license = "MIT"
+license = "Apache-2.0"
 
 [dependencies]
 anyhow = "1"

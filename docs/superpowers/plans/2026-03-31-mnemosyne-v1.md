@@ -1,5 +1,9 @@
 # Mnemosyne v1 Implementation Plan
 
+> **Status: COMPLETED** — All tasks implemented and merged to main on 2026-03-31
+> (commit `0e7b443`). This document is retained as a historical record. Checkboxes
+> were not individually updated during implementation.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the Mnemosyne CLI and Claude Code plugin — a two-tier developer knowledge system with a Rust CLI for managing global knowledge and an updated observational-memory plugin for Claude Code integration.
