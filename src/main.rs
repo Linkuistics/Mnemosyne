@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use mnemosyne::commands;
 
 #[derive(Parser)]
 #[command(name = "mnemosyne", about = "Global developer knowledge system")]
@@ -54,7 +55,13 @@ enum Commands {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { .. } => println!("init: not yet implemented"),
+        Commands::Init { from } => {
+            let mnemosyne_dir = dirs::home_dir()
+                .expect("Could not determine home directory")
+                .join(".mnemosyne");
+            commands::init::run_init(&mnemosyne_dir, from.as_deref())?;
+            println!("Mnemosyne initialized at {}", mnemosyne_dir.display());
+        }
         Commands::Query { .. } => println!("query: not yet implemented"),
         Commands::Promote { .. } => println!("promote: not yet implemented"),
         Commands::Curate => println!("curate: not yet implemented"),
