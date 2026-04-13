@@ -5,165 +5,54 @@ in approximately recommended order; the work phase picks the best next task with
 input from the user.
 
 Ordering reflects the sub-project dependency chain recorded in `{{PLAN}}/memory.md`:
-**~~E done~~ → ~~B done~~ → C → A → F → D → H → I**, with **G** running in
-parallel (placed last for file-order convenience, not priority), and **K/L** as
-parallel v1.5+ sidequests (L is a small independent spike; K is the Obsidian
-plugin client that depends on B's implementation landing and on L's
-recommendation). Sub-project **J is obsolete** — folded into B as
-`ManualEditorExecutor`, see memory.md for the rationale.
+**~~E done~~ → ~~B done~~ → ~~C done~~ → A → F → D → H → I**, with **G** and the
+newly-surfaced **M (Observability)** running in parallel (placed last for
+file-order convenience, not priority), and **K/L** as parallel v1.5+ sidequests
+(L is a small independent spike; K is the Obsidian plugin client that depends
+on B's implementation landing and on L's recommendation). Sub-project
+**J is obsolete** — folded into B as `ManualEditorExecutor`, see memory.md
+for the rationale. Sub-project **M (Observability — logging, metrics
+collection, display, analysis)** was surfaced during sub-project C's
+brainstorm (Session 6, 2026-04-13) as a new candidate; C's `SpawnLatencyReport`
+is a tactical seed that M will own and integrate into a broader event/metrics
+framework.
 
-**The Obsidian symlink validation spike sits at position 1**, above the
-brainstorm chain. Triage (Session 4 follow-on, 2026-04-12) promoted it
-there from its previous "right after C" slot because: (1) it is the only
-`[do]` task in the backlog and fully parallelizable with any brainstorm
-pick; (2) its binary pass/fail outcome is the highest-leverage piece of
-empirical evidence still missing from the plan — a failure cascades
-through G (migration bootstrap), A (vault layout), and B (implementation),
-so discovering it late is disproportionately expensive; (3) Session 4's
-"to try next" log explicitly posed this as a triage question and framed
-position 1 as the alternative to evaluate. Position 1 is a default, not
-a lock — the work phase may still pick sub-project C's brainstorm next
-if the user prefers the brainstorm-chain momentum; it only makes the
-spike visible as the earliest executable work.
+**The Obsidian symlink validation spike PASSED 6/6 on both platforms** in
+Session 5 (2026-04-13) — driven via the `guivision` CLI against
+`guivision-golden-macos-tahoe` and `guivision-golden-linux-24.04` with
+Obsidian 1.12.7 + Dataview 0.5.67 pinned identically. The vault-as-view-
+over-symlinks framing stands; the hard-copy-staging fallback does NOT
+need to be activated; sub-project A's brainstorm and sub-project B's
+implementation can proceed on the symlinked-vault baseline without
+further investigation. Evidence at
+`{{PROJECT}}/tests/fixtures/obsidian-validation/results/{macos,linux}/`
+(commit `98ef7db`); architectural consequence captured in
+`{{PLAN}}/memory.md`. The spike also established a canonical
+guivision + OCR evidence pattern (see the "UI/integration spike
+validation" memory entry) which future spikes — sub-project L's
+terminal-plugin spike, sub-project I and K UI work, and sub-project B's
+v1 dogfood acceptance test — should follow. Sub-project B's sibling-plan
+Task 0 (the same spike) has been marked done in
+`{{PROJECT}}/LLM_STATE/sub-B-phase-cycle/backlog.md` with a pointer to
+this evidence, unblocking B's downstream implementation tasks.
 
 Sub-project E's brainstorm completed 2026-04-12; its design doc lives at
 `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md` and its
 implementation sibling plan at `{{PROJECT}}/LLM_STATE/sub-E-ingestion/`. Sub-project
 B's brainstorm completed 2026-04-12; its design doc lives at
 `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md` and its
-implementation sibling plan at `{{PROJECT}}/LLM_STATE/sub-B-phase-cycle/`. The
-full trail of E's and B's decisions is distilled into `{{PLAN}}/memory.md`; the
+implementation sibling plan at `{{PROJECT}}/LLM_STATE/sub-B-phase-cycle/`.
+Sub-project C's brainstorm completed 2026-04-13; its design doc lives at
+`{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
+(commits `71fd307` and `b1a8cea`) and its implementation sibling plan at
+`{{PROJECT}}/LLM_STATE/sub-C-adapters/` (commit `9dac743`). The full trail of
+E's, B's, and C's decisions is distilled into `{{PLAN}}/memory.md`; the
 raw session record is in `{{PLAN}}/session-log.md`.
 
 ## Task Backlog
 
-### Execute Obsidian symlink validation spike (macOS + Linux) `[do]`
-- **Status:** done
-- **Dependencies:** none — runs in parallel with any brainstorm task. Must
-  complete before any sub-project B implementation code is written that
-  assumes the symlinked vault layout works, and before sub-project A's
-  implementation plan commits to the symlinked-vault baseline.
-- **Description:** Promoted from within sub-project A's task description
-  during Session 4 (2026-04-12) because it is cross-cutting — it blocks
-  B's implementation as much as A's, and embedding it inside A's
-  brainstorm task risked hiding the dependency until A's brainstorm ran.
-  **Triage (Session 4 follow-on) additionally moved this task to
-  position 1 of the backlog** because it is the only `[do]` task, is
-  fully parallelizable, and its failure mode (cascade through G, A, B)
-  is the most expensive to discover late. See the intro paragraph for
-  the full ordering rationale.
-
-  The spike validates the load-bearing assumption behind the
-  "dedicated Mnemosyne-vault with symlinked per-project directories"
-  decision recorded in `{{PLAN}}/memory.md`: that Obsidian's Dataview,
-  graph view, and backlink tracking work correctly when one subtree of
-  the vault (`<vault>/projects/<project-name>/`) is reached via a
-  filesystem symlink rather than being a real directory.
-
-  Cover:
-  - Set up a minimal reproducible test vault with one symlinked
-    `projects/<name>/` subtree containing a handful of markdown notes
-    with kebab-case YAML frontmatter, wikilinks across the boundary,
-    and tags.
-  - Run the validation on both macOS (native) and Linux (via
-    GUIVisionVMDriver golden images) with identical fixtures and
-    identical Obsidian + Dataview versions pinned.
-  - Exercise: (1) Dataview table queries that span the symlink
-    boundary, (2) graph view rendering of cross-boundary links, (3)
-    backlink panel behaviour for notes on both sides of the boundary,
-    (4) file tree pane navigation into the symlinked subtree, (5) file
-    watcher behaviour when a file inside the symlinked subtree is
-    edited externally, (6) Obsidian's safety checks (does it warn
-    about symlinks? does it follow them?).
-  - Commit reproducible evidence (vault fixture, pinned Obsidian /
-    Dataview versions, test script, screenshots or Dataview query
-    output, pass/fail annotations) to
-    `{{PROJECT}}/tests/fixtures/obsidian-validation/`.
-  - Record the outcome in `{{PLAN}}/memory.md`: if the spike passes on
-    both platforms, the symlinked-vault layout stands as designed; if
-    it fails on either platform, the layout falls back to a hard-copy
-    staging model with two-way sync and sub-project A's brainstorm
-    must absorb the fallback end-to-end before any implementation
-    proceeds.
-
-  **Why this is a `[do]` task, not a brainstorm or a decision.** The
-  architectural decision has already been made (vault-as-view-over-
-  symlinks, with a fallback named). What remains is a reproducible
-  execution task to gather empirical evidence. The outcome is binary
-  (pass / fail per platform) and feeds directly into memory.md and
-  downstream implementation plans.
-
-  **Why it's promoted out of sub-project A's task.** Hidden blockers
-  buried inside other task descriptions are a known phase-cycle
-  failure mode — the triage phase may not surface them as executable
-  work until the parent task runs. Promoting to a top-level task
-  makes the dependency visible and lets the spike run in parallel
-  with any remaining brainstorm task. Sub-project A's brainstorm no
-  longer needs to own the spike itself, only to respect the outcome
-  (which it already does via the fallback clause).
-
-  Output: committed evidence at
-  `{{PROJECT}}/tests/fixtures/obsidian-validation/` plus a short
-  results summary appended to `{{PLAN}}/memory.md` under the
-  existing vault-layout decision, plus a pointer in this backlog
-  entry's **Results** block to the commit(s) carrying the evidence.
-- **Results:** **PASS 6/6 on both platforms (2026-04-13, Session 5).**
-  Driven end-to-end via the `guivision` CLI against
-  `guivision-golden-macos-tahoe` and `guivision-golden-linux-24.04`
-  with Obsidian 1.12.7 + Dataview 0.5.67 pinned identically on both
-  runs.
-  - **macOS (Tahoe, Apple Silicon):** all six checks passed — Dataview
-    `LIST FROM "projects"` rendered both project-side notes, graph
-    view rendered the cross-boundary `obsidian-spike ↔ boundary-note`
-    edge, backlinks panel indexed the cross-boundary reference, file
-    explorer expanded the symlinked `projects > example > {README,
-    another-note, boundary-note}` subtree and opened files normally,
-    file watcher detected external appends through the symlink within
-    ~3s (found via in-file Cmd+F search), and the vault-open safety
-    check surfaced only Obsidian's standard community-plugin trust
-    modal (not symlink-related). Evidence:
-    `{{PROJECT}}/tests/fixtures/obsidian-validation/results/macos/`
-    (six check screenshots, a trust-modal informational screenshot,
-    and `result.md` with per-check pass/fail table).
-  - **Linux (Ubuntu 24.04 ARM64, Xorg under GDM + GNOME Shell):**
-    all six checks passed with the same fixture and pinned versions.
-    Same pass criteria met. One Electron-specific launch note: the
-    AppImage must be launched with `--disable-gpu --no-sandbox`
-    because virtio-gpu acceleration under tart produces a blank
-    framebuffer for Electron's default GPU-compositing path —
-    symptom is not symlink-related and would affect any Electron
-    app. Evidence:
-    `{{PROJECT}}/tests/fixtures/obsidian-validation/results/linux/`
-    (six check screenshots and `result.md` with per-check pass/fail
-    table). Check 5 evidence on Linux used Obsidian's global search
-    (Ctrl+Shift+F) rather than in-file search because it is a
-    stronger test — it exercises both the file watcher AND the
-    search indexer, and returned `• externally appended at 14:44:16`
-    inside `boundary-note` as an indexed match.
-  - **Architectural consequence:** the
-    "dedicated Mnemosyne-vault with symlinked per-project
-    directories" decision recorded in
-    `{{PLAN}}/memory.md` stands. The hard-copy-staging fallback does
-    NOT need to be activated. Sub-project A's brainstorm and
-    sub-project B's implementation plan can proceed on the
-    symlinked-vault baseline without blocking on further
-    investigation.
-  - **Bonus artifact:** a durable feedback memory
-    (`feedback_guivision_cli.md`) was saved capturing the user's
-    direction that VM-driven work must use `guivision <subcommand>`
-    exclusively — never SSH/rsync/VNC-direct. This was surfaced
-    early in the session when the initial macOS setup had been
-    attempted via SSH, and the correction was applied to the Linux
-    run from the start. Saved to the auto-memory system and
-    indexed in `MEMORY.md`, so future work sessions default to the
-    correct interface.
-  - **Commit pointer:** evidence at `98ef7db` ("test: add Obsidian
-    symlink validation spike fixture and evidence"). Companion
-    plan-state update (this backlog entry plus memory.md, session-log.md,
-    phase.md) landed in the next commit on `main`.
-
 ### Brainstorm sub-project C — harness adapter layer `[brainstorm]`
-- **Status:** not_started
+- **Status:** done
 - **Dependencies:** none (sub-projects B and E both complete; their cross-cutting
   requirements for C are captured in `{{PLAN}}/memory.md` and expanded below)
 - **Description:** Design the adapter abstraction over Claude Code, Codex, Pi,
@@ -207,7 +96,97 @@ raw session record is in `{{PLAN}}/session-log.md`.
 
   Output: design doc at `{{PROJECT}}/docs/superpowers/specs/2026-MM-DD-sub-C-adapters-design.md`
   and a sibling plan at `{{PROJECT}}/LLM_STATE/sub-C-adapters/`.
-- **Results:** _pending_
+- **Results:** **DONE in Session 6 (2026-04-13).** Brainstorm produced the
+  full design via the `superpowers:brainstorming` skill across five locked
+  decision points plus two post-write user clarifications. Outputs:
+  - **Design doc**: `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
+    (1311 lines, two commits: `71fd307` initial + `b1a8cea` post-write
+    amendment).
+  - **Sibling implementation plan**: `{{PROJECT}}/LLM_STATE/sub-C-adapters/`
+    (commit `9dac743`), with 24 unconditional implementation tasks plus
+    2 conditional warm-pool tasks gated on the C-1 dogfood acceptance
+    criterion.
+
+  Five locked decisions: **(Q1) bidirectional `--input-format stream-json
+  + --output-format stream-json` process model** (no PTY, no terminal
+  parsing — Claude Code's structured I/O on stdin/stdout supports both
+  reading model output and forwarding user-typed messages mid-session,
+  resolving the "user wants live interaction" constraint without going
+  to PTY). **(Q2) `src/harness/` module** under the existing single
+  binary crate (no workspace conversion). **(Q3) Cold-spawn only in v1**,
+  warm-pool work conditional on a measurable acceptance gate (`C-1`:
+  p95 < 5s across N≥10 dogfood cycles); a half-day warm-pool reset
+  spike (3-check protocol: structured envelope → `/clear`-as-text →
+  pre-spawned single-use degradation) fires only if C-1 trips. **(Q4)
+  JSON Lines `FixtureRecord` format** (`Output`/`Delay`/`ExpectUserInput`/`Exit`
+  records) recorded via a new `mnemosyne dev record-fixture` subcommand
+  driving the real adapter under instrumentation. **(Q5) Two-profile
+  CLI flag mapping** (`IngestionMinimal` → `--allowed-tools "" --permission-mode default`;
+  `ResearchBroad` → no allowed-tools flag + `--permission-mode acceptEdits`)
+  with stream-side defence-in-depth tool enforcement as the second layer.
+
+  Two mid-design revisions surfaced via user pushback: **actor-style
+  `ClaudeCodeSession`** with single-owner-per-state discipline (three
+  threads per session: actor + stdout-reader + stderr-reader; all
+  mutable state in the actor; `crossbeam-channel` for typed inboxes/
+  outboxes; replaces the original interior-mutability sketch), and
+  **process-group termination as a v1 correctness requirement**
+  (`process_group(0)` at spawn, `nix::sys::signal::killpg` at
+  terminate, two-phase SIGTERM→SIGKILL escalation with 500ms grace;
+  not deferred to v1.5).
+
+  Two post-write user clarifications added in commit `b1a8cea`:
+  **(1) The "no callback channel" rule disambiguated** — it forbids
+  *control* flowing from harness to Mnemosyne (slash commands, programmatic
+  callbacks), not *observation* of harness state. Resolved by adding an
+  `OutputChunkKind::SessionLifecycle` variant (fourth amendment to B's
+  trait) with documented stable text formats `"ready"` /
+  `"turn_complete:<subtype>"` / `"exited:<status>"` for protocol-level
+  state observation. **(2) Task-level vs protocol-level completion
+  separated** — protocol-level "turn over" (Claude Code's `result` event,
+  surfaced as `SessionLifecycle`) is necessary but not sufficient; what
+  the user actually wants is "the LLM has decided the work is done",
+  detected via prompt-instructed sentinel strings (e.g. "READY FOR
+  REFLECT") that B's executor watches for in `Stdout` chunks via a
+  sliding-buffer matcher. Sentinel detection lives in B (not C) because
+  sentinels are coupled to phase prompts (which B owns), the mechanism
+  is harness-agnostic, and C should stay focused on harness mechanics.
+
+  **Cross-sub-project requirements going back to Sub-B**: four additive
+  trait amendments + one executor-level requirement, all forced by Q1
+  and the post-write clarifications, all post-dating B's brainstorm:
+  (1) `HarnessSession::send_user_message(&self, text)` new method;
+  (2) `HarnessSession` methods change from `&mut self` to `&self` with
+  `Send + Sync` bound; (3) `LlmHarnessExecutor` storage changes from
+  `Box<dyn HarnessSession>` to `Arc<dyn HarnessSession>` and gains a
+  `user_input_sender()` TUI-facing method, spawning two threads
+  (output-drainer + input-forwarder); (4) `OutputChunkKind` gains a
+  `SessionLifecycle` variant; (5) `LlmHarnessExecutor` runs `Stdout`
+  chunks through a configurable completion-sentinel matcher with
+  sliding-buffer detection. These amendments land in B's implementation
+  phase, not as a B re-brainstorm. Sub-B's sibling-plan needs an
+  amendment task added during its next triage to absorb them.
+
+  **New sub-project surfaced**: **Sub-M (Observability — logging,
+  metrics collection, display, analysis)**. C's `SpawnLatencyReport` is
+  a tactical seed specific to the C-1 acceptance gate, not the start of
+  a metrics framework. Sub-M will own the broader story (structured
+  logging crate choice, event bus design, metrics aggregation, Obsidian
+  explorer integration, the relationship to E's ingestion event stream).
+  Added to this backlog as a new brainstorm candidate alongside G.
+
+  **Three new Cargo deps** justified individually under
+  integration-over-reinvention: `which` (binary discovery), `nix`
+  (`killpg` for process-group termination), `crossbeam-channel`
+  (`Sync` channels for the actor architecture). No PTY crate, no
+  tokio, no async runtime.
+
+  **C-1 acceptance gate** is the swap-in moment for sub-B's stub
+  adapter: when the dogfood orchestrator plan completes 10 full
+  work → reflect → triage cycles against the real `ClaudeCodeAdapter`
+  on the user's primary dev machine with p95 cold-spawn < 5s, both C
+  v1 and (jointly) B v1 are accepted. The real adapter then becomes
+  B's adapter of record permanently.
 
 ### Brainstorm sub-project A — DEV_ROOT global knowledge store `[brainstorm]`
 - **Status:** not_started
@@ -230,14 +209,15 @@ raw session record is in `{{PLAN}}/session-log.md`.
     config override), init flow, and bootstrap. A may propose revisions to
     the per-project `<project>/mnemosyne/` directory name, but the
     vault-as-view-over-symlinks framing is load-bearing.
-  - **Hard pre-implementation blocker** — cross-platform Obsidian + symlinks
-    validation spike using GUIVisionVMDriver golden images. The spike must
-    be reproducible on macOS and Linux with evidence committed to
-    `tests/fixtures/obsidian-validation/`. If Obsidian's Dataview/graph/backlink
-    features fail against symlinked `projects/<name>/` subtrees on either
-    platform, the layout falls back to a hard-copy staging model with
-    two-way sync before any B code (or A-dependent code) ships. A's
-    brainstorm must confirm how this fallback works end-to-end.
+  - **Symlink validation spike RESOLVED (PASS 6/6, 2026-04-13)** — the
+    cross-platform Obsidian + symlinks validation spike was executed via
+    the `guivision` CLI against `guivision-golden-macos-tahoe` and
+    `guivision-golden-linux-24.04` with Obsidian 1.12.7 + Dataview 0.5.67
+    pinned identically. All six checks passed on both platforms; evidence
+    at `tests/fixtures/obsidian-validation/results/{macos,linux}/`,
+    commit `98ef7db`. The vault-as-view-over-symlinks baseline stands.
+    A's brainstorm proceeds on this baseline with NO obligation to absorb
+    the hard-copy-staging fallback.
   - **Obsidian-native format discipline** — Dataview-friendly kebab-case
     YAML frontmatter, wikilinks for cross-references, tags as first-class
     metadata, a Mnemosyne-provided `.obsidian/` template with Dataview
@@ -428,6 +408,17 @@ raw session record is in `{{PLAN}}/session-log.md`.
   existing plugins and K's requirements, and a recommendation on
   fork-vs-build-new.
 
+  **Evidence pattern.** If L's investigation requires running any plugin
+  inside Obsidian to verify capabilities, follow the canonical
+  guivision + OCR evidence pattern established by the symlink spike
+  (Session 5, 2026-04-13) — see the "UI/integration spike validation"
+  entry in `{{PLAN}}/memory.md`. Drive Obsidian via the `guivision` CLI
+  against `guivision-golden-{macos-tahoe,linux-24.04}` with pinned
+  Obsidian + plugin versions, capture per-check evidence as
+  `guivision screenshot` + `guivision find-text` artifacts, and commit
+  results under `{{PROJECT}}/tests/fixtures/sub-L-terminal-spike/`. SSH /
+  rsync / VNC-direct paths are out per `feedback_guivision_cli.md`.
+
   Output: design doc (short — a few hundred lines) at
   `{{PROJECT}}/docs/superpowers/specs/YYYY-MM-DD-sub-L-obsidian-terminal-spike.md`.
   No sibling plan needed if the recommendation is "use plugin X
@@ -498,10 +489,10 @@ raw session record is in `{{PLAN}}/session-log.md`.
     decision; G owns the move.
   - **Vault bootstrap** — for each existing project, G's migration script
     must establish the `<vault>/projects/<project-name>` symlink pointing at
-    the renamed `<project>/mnemosyne/` directory. This hinges on the
-    cross-platform Obsidian + symlinks validation spike (A's hard
-    pre-implementation blocker) passing; if that spike fails, G's rename
-    plan must be reworked to the hard-copy + two-way-sync fallback.
+    the renamed `<project>/mnemosyne/` directory. The cross-platform
+    Obsidian + symlinks validation spike PASSED on both macOS and Linux
+    (Session 5, 2026-04-13; commit `98ef7db`), so the symlink-based
+    bootstrap stands; the hard-copy + two-way-sync fallback is NOT needed.
 
   G runs in parallel with other sub-projects — its design needs to evolve as
   the others reveal what's actually being changed. Listed last in file order
@@ -512,12 +503,66 @@ raw session record is in `{{PLAN}}/session-log.md`.
   and a sibling plan at `{{PROJECT}}/LLM_STATE/sub-G-migration/`.
 - **Results:** _pending_
 
+### Brainstorm sub-project M — observability (logging, metrics, display, analysis) `[brainstorm]`
+- **Status:** not_started
+- **Dependencies:** none (parallel-able with all other brainstorms; surfaced
+  during sub-project C's brainstorm in Session 6, 2026-04-13)
+- **Description:** Design Mnemosyne's observability framework. Cover:
+  structured logging strategy (crate choice — `tracing` / `slog` / `log` /
+  custom; subscriber configuration; per-module log levels), event bus
+  shape (how phase events, harness lifecycle events, ingestion events,
+  user actions, error variants, and tactical instrumentation reports flow
+  to a single typed event stream), metrics aggregation (counters,
+  histograms, gauges; in-memory ring buffer vs. file-backed; per-session
+  / per-plan / per-process scopes), display surfaces (live in the
+  Ratatui TUI, persistent in Obsidian via Dataview queries, exported to
+  external tools), analysis tooling (querying historical events,
+  computing percentiles, surfacing anomalies), the relationship to
+  sub-project E's ingestion event stream (which is itself a kind of
+  event stream and should compose cleanly with whatever M designs),
+  the relationship to sub-project I's Obsidian coverage (events and
+  metrics are explorer surfaces too), the migration path for C's
+  tactical `SpawnLatencyReport` instrumentation onto the new framework.
+
+  **Surfaced during sub-project C's brainstorm.** C's design deliberately
+  ships a *tactical* `SpawnLatencyReport` instrumentation that is
+  emitted as an `InternalMessage` chunk and written to
+  `<staging>/spawn-latency.json` — purpose-built for the C-1 acceptance
+  gate and explicitly *not* the start of a metrics framework. C's
+  design records a forward-pointer to this proposed sub-project M so
+  that future maintainers know the broader observability story has its
+  own home, and so M's brainstorm starts from a clean slate without
+  having to retrofit a tactical artifact into the architectural shape.
+  See §11.5 of C's design doc.
+
+  **Cross-cutting requirement on every sub-project.** Once M lands, every
+  other sub-project's "I want to know what's happening inside this
+  component" question routes through M's framework rather than through
+  ad-hoc `eprintln!`-style logging or per-component metrics collection.
+  M should therefore be brainstormed early enough that B, C, D, and E
+  can adopt it during their implementation phases rather than retrofitting
+  later. Parallel-able with G — both can run any time.
+
+  **Risk acknowledgement (from C's spec, §9 Risk 5).** v1 of C ships
+  with diagnostic-poor failure modes — when a session fails in a way
+  the actor doesn't anticipate, the user sees the message but no rich
+  context (no recent output buffer, no per-thread state dump). C
+  records this as an *accepted* v1 limitation pointing at this sub-project
+  as the future home for structured logging. M's brainstorm should
+  treat that limitation as a concrete first-day requirement: the
+  framework must support "give me the last N events from session X
+  with full context" as a primary diagnostic operation.
+
+  Output: design doc at `{{PROJECT}}/docs/superpowers/specs/2026-MM-DD-sub-M-observability-design.md`
+  and a sibling plan at `{{PROJECT}}/LLM_STATE/sub-M-observability/`.
+- **Results:** _pending_
+
 ### Decide v1 scope cut `[decision]`
 - **Status:** not_started
-- **Dependencies:** all sub-project brainstorms (~~E done~~, ~~B done~~, C,
-  A, F, D, H, I, G — plus sub-project L's short spike if K is being
-  considered for v1.5 alongside v1). J is obsolete (folded into B). K is
-  explicitly v1.5+ and not part of the v1 scope cut.
+- **Dependencies:** all sub-project brainstorms (~~E done~~, ~~B done~~,
+  ~~C done~~, A, F, D, H, I, G, M — plus sub-project L's short spike if
+  K is being considered for v1.5 alongside v1). J is obsolete (folded
+  into B). K is explicitly v1.5+ and not part of the v1 scope cut.
 - **Description:** Once every in-scope sub-project has been brainstormed
   and its design doc and implementation plan exist, decide what's actually
   in v1 vs. deferred to v2. Update `{{PLAN}}/memory.md` with the v1 cut.

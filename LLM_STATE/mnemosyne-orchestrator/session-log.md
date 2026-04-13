@@ -500,3 +500,163 @@
     new learnings that invalidated the other run's setup, and the
     evidence artifacts are fully reproducible from the committed
     fixture.
+
+### Session 6 (2026-04-13) — Sub-project C brainstorm: harness adapter layer
+- Attempted: the full brainstorm for sub-project C (harness adapter layer
+  abstracting Claude Code, Codex, Pi, and future harnesses), using the
+  `superpowers:brainstorming` skill, producing both the design doc and
+  the sibling implementation plan per the work prompt's instructions for
+  brainstorm tasks. C is the next-most-critical brainstorm pick after the
+  completed B/E pair because it's the swap-target for B's `LlmHarnessExecutor`
+  stub and therefore on the critical path for B's v1 dogfood acceptance test.
+- Worked: the brainstorm drove cleanly through five locked decision points
+  (Q1 process model, Q2 module location, Q3 warm-pool deferral, Q4 fixture
+  format, Q5 tool-profile flag mapping) plus two mid-design revisions
+  (Section 2 actor architecture rewrite, Section 2 micro-revision adopting
+  crossbeam-channel) plus two post-write user clarifications (the "no
+  callback channel" rule disambiguation and the sentinel-driven task-level
+  completion design). Spec self-review passed cleanly on both the initial
+  write (1251 lines, commit `71fd307`) and the post-write amendment
+  (+60 lines to 1311, commit `b1a8cea`). Sibling plan committed as `9dac743`
+  with 24 unconditional implementation tasks plus 2 conditional warm-pool
+  tasks gated on the C-1 dogfood acceptance criterion.
+- Worked (meta): the user surfaced two genuinely architecture-improving
+  pushbacks during the design presentation. Both made the design *better*,
+  not just different:
+  - **The actor-style threading model**: I initially sketched
+    interior-mutability with `Mutex<Option<Child>>` etc. The user's
+    Erlang/Elixir preference for message-passing through channels turned
+    out to be the structurally-cleaner answer here — defence-in-depth
+    tool enforcement has a natural home in the actor's event-handling
+    switch, no shared mutable state simplifies reasoning, and the BEAM
+    heritage is load-bearing for the maintenance story rather than
+    ornamental. Three threads per session (actor + stdout-reader +
+    stderr-reader) costs little on Linux/macOS and the duplication is
+    shallow.
+  - **Process-group termination as a v1 correctness requirement**: I
+    initially had it as a "known v1 limitation" with a v1.5 follow-up
+    note. The user pointed out that orphaned subprocess / leaked-port
+    bugs are nearly invisible until they bite, and doing it right once
+    is much cheaper than chasing the leak later. Pulled the work into
+    v1: `process_group(0)` at spawn (stable Rust `CommandExt`),
+    `nix::sys::signal::killpg` at terminate, two-phase SIGTERM→SIGKILL
+    escalation with 500ms grace.
+- Worked (meta): the post-write `/clear` insight from the user reshaped
+  the v1.5 warm-pool design from "spawn fresh processes per pool entry"
+  into "reset and reuse existing processes via Claude Code's session-
+  reset mechanism", changing what could be a 600-line pool manager into
+  potentially 30 lines once the spike validates the reset path. Captured
+  as the §7.4 three-check spike protocol (structured envelope → `/clear`
+  text → pre-spawned single-use degradation) gated on the C-1 acceptance
+  test failing. The user's casual "I wonder if we can use /clear" turned
+  into the entire warm-pool implementation strategy.
+- Worked (meta): the post-write user clarification on "no callback channel"
+  was the single most consequential intervention of the session. My initial
+  spec phrasing collapsed two distinct concerns — *control* (forbidden:
+  harness calling Mnemosyne) and *observation* (allowed and necessary:
+  Mnemosyne reading harness state) — into one rule. The user's gentle
+  pushback ("I think a harness to Mnemosyne channel would be useful, not
+  least because we want to know when the harness has reached a stopping
+  point") forced the disambiguation, which led to adding `OutputChunkKind::SessionLifecycle`
+  as a fourth amendment to B's trait for protocol-level state observation.
+  The user's followup ("I would think the prompts include 'when finished
+  say READY FOR THE NEXT PHASE'") then introduced the genuinely-correct
+  task-level completion mechanism: prompt-instructed sentinel strings
+  detected by B's executor via a sliding-buffer matcher. The two
+  clarifications together added a fifth cross-sub-project requirement
+  (sentinel detection in B's executor) and made the spec strictly more
+  faithful to the original architectural intent.
+- Didn't work / friction: I approached the original Section 2 with an
+  "interior mutability + Mutex wrappers" sketch that needed two rounds
+  of revision (actor model → crossbeam adoption) before settling. Could
+  have caught the actor-model fit during initial design if I'd taken
+  the user's BEAM preference more seriously upfront — it was visible in
+  prior session logs. The lesson: when the user has a stated architectural
+  preference recorded in feedback memory, lead with it during the first
+  draft instead of presenting the obvious-Rust answer and waiting for
+  the pushback.
+- Didn't work / friction: my initial framing of "no callback channel
+  from harness to Mnemosyne" was sloppy enough to confuse the user about
+  whether observation was permitted. The architectural rule from
+  `mnemosyne-orchestrator/memory.md` is about *control* not *observation*,
+  but I phrased it as if the two were the same thing. Fixed in commit
+  `b1a8cea` with explicit disambiguation in §3.3.
+- To try next: pick the next brainstorm task. Per the orchestrator memory
+  (recommended sub-project ordering), A (DEV_ROOT global store) is the
+  natural next pick — it's small-medium, independent, and B has already
+  fixed the vault-as-view-over-symlinks framing so A's scope is now
+  "design the vault location, config override, and bootstrap" rather
+  than "design the vault from scratch". F (plan hierarchy) is also
+  ready, as is L (the small Obsidian terminal-plugin spike) which is
+  attractively independent. M (Observability), the new sub-project
+  surfaced in this session, is also parallel-able and has the strongest
+  cross-cutting impact — it's worth picking earlier rather than later
+  because every other sub-project's structured-logging needs route
+  through M's framework once it lands. User input will decide.
+- Key learnings:
+  - **Fresh-context brainstorms can amend earlier-completed siblings'
+    interfaces.** Sub-C's brainstorm produced four trait amendments to
+    sub-B's draft `HarnessSession` surface, all forced by Q1 (bidirectional
+    stream-json) which post-dated B's brainstorm. The amendments are
+    additive and B is in "brainstorm done, implementation not started"
+    status, so they land in B's implementation phase without requiring a
+    B re-brainstorm. This is the project's "cross-sub-project requirements
+    threaded through fresh-context sessions" pattern in action — and it's
+    the reason fresh-context sessions are a feature rather than a cost:
+    each brainstorm gets to amend earlier interfaces with the benefit of
+    newer constraints, rather than carrying every old assumption forward
+    unexamined.
+  - **The "no callback channel" rule needs careful scope discipline.**
+    It rules out the harness *calling* Mnemosyne (slash commands,
+    programmatic callbacks, LLM-invoked Mnemosyne actions) — but does
+    NOT rule out Mnemosyne *observing* harness state and reacting on
+    its own side. The bidirectional stream-json output is the canonical
+    observation channel; `SessionLifecycle` chunks surface protocol-level
+    state transitions (ready / turn complete / exited); sentinel detection
+    in B's executor surfaces task-level "the LLM has finished the work"
+    signals. All three are observation, none are control. Future sub-project
+    brainstorms that touch the harness boundary should consult §3.3 of
+    C's spec before re-framing this.
+  - **Protocol-level "turn over" and task-level "I am done with the work"
+    are different signals.** Claude Code's `result` event tells you the
+    model stopped emitting tokens for this round; the LLM judging itself
+    done with the task is a separate signal that requires the LLM's own
+    self-assessment, surfaced via prompt-instructed sentinel strings.
+    Conflating the two would cause Mnemosyne to transition phases the
+    moment Claude Code finished a single turn even when the LLM was
+    mid-task. Sentinel detection lives in B (not C) because sentinels
+    are coupled to phase prompts and the mechanism is harness-agnostic.
+  - **Always-on instrumentation is cheaper than gated instrumentation.**
+    The `SpawnLatencyReport` is emitted on every session, written to
+    `<staging>/spawn-latency.json`, and surfaced as an `InternalMessage`
+    chunk — no debug flag, no env var. The cost (4 timestamps + 1 channel
+    send + 1 file write per session) is so small it doesn't merit a flag,
+    and the benefit (no "I wish I had measurements from that one weird
+    session" moments) compounds across the entire dogfood cycle and
+    beyond. The "make the C-1 acceptance gate measurable by default"
+    framing turned out to be a generally-useful instrumentation discipline
+    that should propagate to other sub-projects.
+  - **Tactical instrumentation should explicitly disclaim being a
+    framework.** C's `SpawnLatencyReport` is purpose-built for the C-1
+    gate and is documented as a tactical seed, not the start of a
+    metrics framework. The proposed sub-project M (Observability) is
+    the future home for the broader story. This separation prevents
+    the tactical artifact from accreting framework-shaped scope creep,
+    and gives M's brainstorm full freedom to pick its own structured
+    logging crate, event bus shape, and migration path. Surfacing M as
+    a new sub-project candidate this session is itself a win — it would
+    have been very easy to silently grow C's spec into a framework
+    without realising it.
+  - **The brainstorm session model handles late-arriving pushbacks
+    gracefully when the spec is short and consistent.** The post-write
+    user clarification round added a fourth trait amendment, a new
+    enum variant, three documented text formats, a new §4.3.3 subsection,
+    and an entire fifth executor-level requirement back to B — all
+    landing as a clean amendment commit (`b1a8cea`, +60 lines) without
+    touching any earlier section's logic. The structural symmetry of
+    the spec (§3 declarations → §4 implementation → §11 cross-sub-project
+    requirements → Appendix A decision trail) made each piece trivially
+    locatable. The lesson: spec doc structure that lets each amendment
+    land in exactly the sections that "want" it is much easier to
+    maintain than a spec where a small change ripples through many
+    unrelated sections.
