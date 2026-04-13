@@ -11,7 +11,7 @@ depends-on:
 unblocks:
   - sub-B-phase-cycle (v1 dogfood acceptance test)
 amendments-to:
-  - sub-B-phase-cycle (three additive HarnessSession trait amendments — see §11.1)
+  - sub-B-phase-cycle (four additive HarnessSession trait amendments + one executor requirement — see §11.1)
 new-sub-projects-surfaced:
   - sub-M-observability (forward pointer — see §11.5)
 ---
@@ -20,7 +20,7 @@ new-sub-projects-surfaced:
 
 This document specifies the design of Mnemosyne's harness adapter layer, the abstraction that lets Mnemosyne (the orchestrator) spawn, control, observe, and terminate LLM coding harnesses (Claude Code in v1, future Codex / Pi adapters in v1.5+) as managed child processes. It is the implementation contract for sub-project C in the Mnemosyne orchestrator merge plan.
 
-The trait *shape* of `HarnessAdapter` and `HarnessSession` was specified by sub-project B's design (`docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md` §4.1). C owns the trait *declaration*, fills in the implementations, and — based on this brainstorm — proposes three additive amendments to B's draft trait that B's implementation phase will absorb (see §11.1).
+The trait *shape* of `HarnessAdapter` and `HarnessSession` was specified by sub-project B's design (`docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md` §4.1). C owns the trait *declaration*, fills in the implementations, and — based on this brainstorm — proposes four additive amendments to B's draft trait plus one executor-level requirement that B's implementation phase will absorb (see §11.1).
 
 C is on the critical path for B's v1 dogfood acceptance test: B's `LlmHarnessExecutor` currently holds a stub adapter; landing C's real `ClaudeCodeAdapter` is the swap that unblocks the orchestrator's first end-to-end run.
 
@@ -54,7 +54,8 @@ C is on the critical path for B's v1 dogfood acceptance test: B's `LlmHarnessExe
 - Latency instrumentation as a v1 acceptance gate signal.
 - Process-group termination as a v1 correctness requirement.
 - A new top-level `src/harness/` Rust module under Mnemosyne's existing single binary crate.
-- Three additive amendments to B's draft `HarnessSession` trait (see §11.1).
+- Four additive amendments to B's draft `HarnessAdapter` / `HarnessSession` / `OutputChunkKind` surface (see §11.1).
+- One executor-level cross-sub-project requirement back to B: prompt-driven sentinel detection in `LlmHarnessExecutor`'s output-drainer thread for task-level completion signalling (see §11.1).
 
 ### 1.2 Deliberately out of scope
 
@@ -233,6 +234,9 @@ pub enum OutputChunkKind {
     Stderr,
     ToolUse,
     InternalMessage,
+    SessionLifecycle, // [AMENDMENT 4] surfaces protocol-level harness state transitions
+                      //                (ready / turn_complete / exited) to consumers
+                      //                — see §4.3.2 for documented stable text formats
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -257,11 +261,14 @@ pub enum AdapterError {
 }
 ```
 
-### 3.2 Three amendments to B's §4.1, summarised
+### 3.2 Four amendments to B's §4.1, summarised
 
 1. **`HarnessSession::send_user_message(&self, text: &str)`** — new method. Implementations: serialise into Claude Code stream-json user-message envelope and write to child stdin (`ClaudeCodeSession`); send `FixtureCmd::UserMessage` to the replay actor (`FixtureReplaySession`).
 2. **`HarnessSession` method receivers change from `&mut self` to `&self`** with `Send + Sync` bound. Required because B's `LlmHarnessExecutor` now needs to share the session between an output-drainer thread and an input-forwarder thread; `&mut self` would force a single-thread serialisation that defeats the bidirectional model.
 3. **`LlmHarnessExecutor` storage shape changes from `Box<dyn HarnessSession>` to `Arc<dyn HarnessSession>`.** Cosmetic from C's POV, visible in B's executor implementation. B's executor also gains a TUI-facing `user_input_sender() -> mpsc::Sender<String>` method that the TUI uses to forward typed text to the input-forwarder thread.
+4. **`OutputChunkKind` gains a `SessionLifecycle` variant.** Used by adapters to surface protocol-level harness state transitions (ready / turn complete / exited) as structured chunks in the existing output stream. Documented stable text formats listed in §4.3.2. Distinct from *task-level* completion signalling, which is owned by B's executor (see §11.1 fifth requirement) — `SessionLifecycle` is "the harness's protocol state changed", not "the LLM thinks it has finished the work".
+
+Amendments 1-4 are trait-level changes. A fifth cross-sub-project requirement (sentinel-driven task-level completion detection in B's executor) is described in §11.1 as a B implementation requirement rather than a trait amendment.
 
 These amendments are recorded in §11.1 as cross-sub-project requirements going back to B. B is in "brainstorm done, implementation not started" status, so the amendments land in B's implementation phase, not as a B re-brainstorm.
 
@@ -276,7 +283,7 @@ C's implementations honour these B contracts verbatim:
 5. **`HarnessKind::FixtureReplay` is a first-class variant.** The fixture-replay adapter is a real `HarnessAdapter` implementation, not a mock.
 6. **Working directory on spawn is the staging root.** Set via `Command::current_dir` at spawn time.
 7. **Session name is passed through to the harness's session-tracking ID.** Claude Code: `--session-id <name>` (verify exact flag name during impl).
-8. **No callback channel from harness to Mnemosyne.** Output streams are one-way.
+8. **No *control* channel from harness to Mnemosyne.** The harness cannot call into Mnemosyne to invoke actions, trigger phase transitions, or otherwise control the orchestrator. This is the "no callback channel" contract from B's §4.1, and it is the architectural rule from `mnemosyne-orchestrator/memory.md`'s "no slash commands inside the harness" decision applied to the programmatic side. **Observation of harness state by Mnemosyne is NOT restricted** — Mnemosyne reads the entire stream-json output stream, parses it, and reacts on its own side. The `SessionLifecycle` chunk variant (§4.3.2) is the explicit mechanism for surfacing protocol-level harness state transitions to consumers; sentinel-driven task-level completion detection in B's executor (§11.1) is the mechanism for surfacing the LLM's own judgment about task completion. Both are observation channels, not control channels — the harness produces signals, Mnemosyne consumes them.
 
 ---
 
@@ -540,16 +547,32 @@ The `serde(flatten)` rest-fields give forward-compat for additive schema changes
 
 | Stream-json event | `OutputChunkKind` | `OutputChunk.text` |
 |---|---|---|
-| `system` (init) | `InternalMessage` | JSON-serialised event |
+| `system` (init) | `SessionLifecycle` | `"ready"` (documented stable identifier; protocol-level signal that Claude Code is initialised and ready to accept input) |
 | `system` (other subtype) | `InternalMessage` | JSON-serialised event |
 | `assistant` `Text` block | `Stdout` | the text content |
 | `assistant` `ToolUse` block | `ToolUse` | formatted as `<tool_name>(<input json>)` for human-readable rendering |
 | `assistant` `ToolResult` block | `InternalMessage` | formatted as `<tool result>` |
 | `user` (echo) | `InternalMessage` | echoed text (for verification rendering only) |
-| `result` (terminal) | not emitted as a chunk | recorded into `state.last_result`; consumed by `wait()` for the `SessionExitStatus` |
+| `result` (turn boundary) | `SessionLifecycle` | `"turn_complete:<subtype>"` where `<subtype>` is carried verbatim from Claude Code's event (e.g., `"turn_complete:success"`, `"turn_complete:error_max_turns"`); also recorded into `state.last_result` for `wait()` consumption |
+| stdout EOF (process about to exit) | `SessionLifecycle` | `"exited:<exit_code>"` for clean exits, `"exited:terminated"` for signal-killed processes; emitted just before `End(Ok)` is sent on the chunk channel |
 | stderr line (non-JSON) | `Stderr` | the raw line text |
 
 A single assistant message may contain multiple content blocks; the parser emits one `OutputChunk` per block, in order, all sharing the `at` timestamp from when the event was parsed.
+
+#### 4.3.3 `SessionLifecycle` semantics — protocol-level vs task-level
+
+`SessionLifecycle` chunks are **protocol-level** state transitions surfaced by the adapter. They tell consumers "the harness's protocol state has changed in a structured way" — the harness is ready, a turn has ended, the process has exited. The text format is documented and stable per the table above; consumers may safely string-match on the documented identifiers.
+
+These are explicitly **NOT task-level "the LLM thinks it has completed the assigned work" signals.** Protocol-level "turn over" tells you the model stopped emitting tokens for this round; it does *not* tell you whether the model judged the task complete or just paused to ask a clarifying question, request more input, or hit max_tokens mid-thought. The two are different concerns:
+
+| Concept | Source | Mechanism | Detection layer |
+|---|---|---|---|
+| Protocol-level turn boundary | Claude Code's `result` event | Structured stream-json event | C's adapter (this section) |
+| Task-level "I am done with the work" | The LLM's own judgment | Prompt-instructed sentinel string in `Stdout` text | B's executor (§11.1 fifth requirement) |
+
+A consumer that wants to know "the LLM has finished its job" must listen for **sentinel matches in `Stdout` chunks** via B's executor-level detection, not for `turn_complete` lifecycle events from C. Conflating the two would cause Mnemosyne to transition phases the moment Claude Code finished a single turn, even when the LLM was mid-task.
+
+C's adapter has no knowledge of sentinel strings, phase semantics, or task completion criteria — it only surfaces what Claude Code's protocol tells it. Sentinel detection lives in B because sentinel strings are coupled to phase prompts (which B owns) and because the mechanism is harness-agnostic (every harness produces text output regardless of structured-event support, so a future Codex / Pi / bare-LLM adapter gets sentinel detection for free without C-side changes).
 
 ### 4.4 Process-group termination
 
@@ -1116,13 +1139,40 @@ Questions 1-4 are "verify on day one against the real binary" tasks. Question 5 
 
 ## 11. Cross-sub-project requirements
 
-### 11.1 Back to Sub-B — three additive trait amendments
+### 11.1 Back to Sub-B — four trait amendments + one executor requirement
 
-All three forced by Q1 (bidirectional stream-json), which post-dates B's brainstorm. Recorded as "B amendments from Sub-C brainstorm" — B's implementation phase picks them up.
+Amendments 1-3 are forced by Q1 (bidirectional stream-json). Amendment 4 and the executor requirement are forced by the post-write user clarification (see Appendix A) about observation channels and task-level vs protocol-level completion. All five post-date B's brainstorm and land in B's implementation phase, not as a B re-brainstorm.
+
+#### Trait amendments
 
 1. **`HarnessSession::send_user_message(&self, text: &str) -> Result<(), AdapterError>`** — new method.
 2. **`HarnessSession` trait method receivers change from `&mut self` to `&self`** with `Send + Sync` bound on the trait.
 3. **`LlmHarnessExecutor` storage shape changes from `Box<dyn HarnessSession>` to `Arc<dyn HarnessSession>`.** B's executor also gains a TUI-facing `user_input_sender() -> mpsc::Sender<String>` method, and spawns two threads instead of one (output-drainer + input-forwarder).
+4. **`OutputChunkKind` gains a `SessionLifecycle` variant.** Used by adapters to surface protocol-level harness state transitions (ready / turn complete / exited) as structured chunks. Documented stable text formats: `"ready"`, `"turn_complete:<subtype>"`, `"exited:<exit_code>"` (see §4.3.2). Consumers may string-match on these identifiers; the spec commits to keeping them stable.
+
+#### Executor requirement: prompt-driven sentinel detection for task-level completion
+
+5. **`LlmHarnessExecutor` runs incoming `Stdout` chunks through a configurable completion-sentinel matcher** to detect task-level "the LLM has decided the work is done" signals. Sentinels are per-phase, defined in the phase prompt files (`prompt-work.md`, `prompt-reflect.md`, `prompt-triage.md`) alongside the prompt instruction that tells the LLM to emit them. When the matcher fires, the executor emits a `PhaseCompletionDetected` event on its own internal channel, which B's phase state machine consumes as the trigger to wind down the session and transition phases.
+
+   **Sentinel format example** (a phase prompt would end with text like this):
+
+   > When you have completed the task above, emit exactly this string on its own line and stop:
+   >
+   > ```
+   > READY FOR REFLECT
+   > ```
+
+   B's executor, configured at construction with the expected sentinel for the current phase, watches the Stdout chunk stream for that exact line.
+
+   **Sliding-buffer matching is required.** A naive `chunk.text.contains(&sentinel)` check is unsafe: Claude Code's stream-json emits assistant text in content blocks that *can* (in pathological cases) split a multi-token sentinel across two chunks. The matcher must accumulate the last N characters of `Stdout` text into a rolling buffer (sized to ≥ longest expected sentinel + slack, e.g., 256 bytes) and match against the buffer. This is a 10-line addition; well-known pattern.
+
+   **Why this lives in B and not C:**
+   - **Coupling**: sentinels are coupled to phase prompts, which B owns. C should not know about phase semantics.
+   - **Harness-agnosticism**: the sentinel mechanism works against any harness that produces text output, including future bare-LLM / Codex / Pi adapters that don't expose stream-json structured events. Putting detection in B's executor means future adapters get task-level completion detection for free.
+   - **Layering**: C is the wire layer (process spawn, stream parse, lifecycle); B is the policy layer (phase semantics, prompt content, completion conditions). Sentinel detection is policy.
+   - **Per-phase variation**: different phases use different sentinel strings; C would need per-spawn configuration to support that, expanding C's API surface for no architectural benefit.
+
+   **Why this is consistent with "no callback channel from harness to Mnemosyne":** the harness is not calling Mnemosyne. The harness emits a documented string in its normal output stream as part of fulfilling its prompt. Mnemosyne reads its own output stream and detects the string. The flow is harness → output → Mnemosyne reads, exactly the same shape as every other piece of stream observation. The harness has no idea Mnemosyne is matching against it.
 
 ### 11.2 To Sub-E — already covered
 
@@ -1208,6 +1258,16 @@ After the design presentation began, the user pushed back on two elements of Sec
 ### Section 2 micro-revision — `crossbeam-channel` adopted for v1
 
 After the redesigned Section 2, the user expressed preference for `crossbeam-channel` over `std::sync::mpsc + Mutex`. Adopted: replaces `Mutex<Sender<...>>` and `Mutex<Receiver<...>>` wrappers with bare `crossbeam_channel::Sender<...>` / `Receiver<...>` (which are `Send + Sync`), eliminating two `Mutex`es from the session struct and removing lock acquisitions from the hot path of `next_chunk` and `send_user_message`. `crossbeam_channel::select!` is now available for future actor extensions (priority inboxes, ticker channels, etc.). The `crossbeam-channel` dep was added with a written justification.
+
+### Post-write user clarification — observation channel and sentinel-driven completion
+
+After the spec was first written and committed, the user pushed back on the framing of the "no callback channel from harness to Mnemosyne" rule with two distinct points:
+
+1. **Disambiguation between control and observation.** The user noted that "a harness to Mnemosyne channel would be very useful, not least because we want to know when the harness has reached a stopping point" and asked whether the rule was meant to forbid that, or only to forbid harness-side slash commands controlling Mnemosyne. The clarification: the rule forbids *control* flowing from harness to Mnemosyne (slash commands, programmatic callbacks, the LLM invoking Mnemosyne actions via tool use), not *observation* of harness state by Mnemosyne. Mnemosyne reading the harness's structured output and reacting to state transitions on its own side is exactly what the bidirectional stream-json design enables and is fully consistent with the architectural intent. The previous spec phrasing collapsed the two concepts and was sloppy. Resolved by adding §3.3 contract #8's clarifying note, by adding the `SessionLifecycle` chunk variant (amendment 4) for surfacing protocol-level harness state transitions, and by updating §4.3.2's mapping table to expose `system/init`, `result`, and stdout EOF as structured `SessionLifecycle` chunks rather than burying them in `InternalMessage` text or in actor-internal state.
+
+2. **Task-level vs protocol-level completion semantics.** The user further noted that what they actually want to know is "when the LLM has finished" — which the user proposed should be detected via a prompt-instructed sentinel string ("when you are finished say 'READY FOR THE NEXT PHASE'") that Mnemosyne watches for. This is genuinely better than relying on Claude Code's `result` event for completion detection because: (a) `result` is a *protocol-level* signal that fires whenever the model stops emitting tokens, which can happen mid-task (clarifying questions, max_tokens, partial answers); the sentinel is a *task-level* signal driven by the LLM's own judgment; (b) the sentinel mechanism is harness-agnostic — works against future bare-LLM / Codex / Pi adapters that don't expose structured turn events; (c) sentinel strings are coupled to phase prompts, so they belong with B (which owns the prompts) rather than with C (which owns harness mechanics). Resolved by recording sentinel detection as the fifth cross-sub-project requirement back to B (§11.1), with sliding-buffer matching to handle the chunk-boundary edge case, and by clarifying in §4.3.3 that `SessionLifecycle` chunks are protocol-level signals while sentinel matches are task-level signals, with both being valid observation channels and neither being a harness → Mnemosyne control channel.
+
+The two clarifications taken together do not overturn any earlier decision; they tighten the framing of the "no callback channel" rule and add a fourth trait amendment plus a fifth executor-level requirement back to B. The C v1 surface area grows by exactly one enum variant (`OutputChunkKind::SessionLifecycle`) and three documented stable text formats (`"ready"`, `"turn_complete:<subtype>"`, `"exited:<status>"`). B's executor surface grows by a sentinel matcher with a sliding buffer.
 
 ---
 
