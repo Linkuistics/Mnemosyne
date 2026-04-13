@@ -6,8 +6,10 @@ doc at
 Consult the spec before starting any task.
 
 Tasks are listed in approximately recommended order. **Task 0 (the Obsidian +
-symlinks validation spike) is a hard pre-implementation blocker** — no other
-task starts until it passes on both macOS and Linux. After task 0, the
+symlinks validation spike) PASSED on both macOS and Linux** in Session 5
+(2026-04-13) of the parent orchestrator plan, executed end-to-end via the
+`guivision` CLI; evidence at `tests/fixtures/obsidian-validation/results/{macos,linux}/`
+(commit `98ef7db`). With Task 0 cleared, downstream tasks are unblocked. The
 ordering follows the dependency chain: core types → plan-state → staging →
 executors → runner → drivers → runtime → dogfood. The work phase picks the
 best next task with input from the user.
@@ -15,7 +17,7 @@ best next task with input from the user.
 ## Task Backlog
 
 ### Task 0 — Obsidian + symlinks validation spike (cross-platform) `[spike]`
-- **Status:** not_started
+- **Status:** done
 - **Dependencies:** none (blocks everything else)
 - **Description:** Pre-implementation blocker. Validate that Obsidian on
   macOS and Linux correctly renders, indexes, and navigates a vault whose
@@ -35,11 +37,114 @@ best next task with input from the user.
   pass on both platforms. If any check fails on Linux (a v1 target),
   stop and open a brainstorm discussion for the hard-copy + two-way-sync
   fallback layout.
+- **Results:** **PASS on both platforms.** Executed at the orchestrator-plan
+  level in Session 5 (2026-04-13) of `mnemosyne-orchestrator`, driven
+  end-to-end via the `guivision` CLI against
+  `guivision-golden-macos-tahoe` and `guivision-golden-linux-24.04` with
+  Obsidian 1.12.7 + Dataview 0.5.67 pinned identically. The orchestrator
+  spike's six-check enumeration (Dataview / graph view / backlinks / file
+  tree+open / file watcher / safety checks) covers this task's seven
+  checks (file tree+file opening collapsed into a single explorer check,
+  wikilinks subsumed by Dataview cross-boundary queries). All checks
+  passed on both platforms. Evidence:
+  `{{PROJECT}}/tests/fixtures/obsidian-validation/results/{macos,linux}/`
+  with per-platform `result.md` summary tables and per-check screenshots
+  + OCR transcripts. Commit `98ef7db` ("test: add Obsidian symlink
+  validation spike fixture and evidence"). Architectural consequence
+  (vault-as-view-over-symlinks stands; hard-copy fallback NOT activated)
+  recorded in `{{DEV_ROOT}}/Mnemosyne/LLM_STATE/mnemosyne-orchestrator/memory.md`
+  under the "Dedicated Mnemosyne-vault" decision. **Task 0 is cleared;
+  all downstream B implementation tasks are now unblocked.** Two
+  platform-specific operational notes surfaced and should be remembered
+  by any future B GUI work on the same images: (1) Electron-in-virtio-gpu-
+  under-tart on ARM64 Ubuntu requires `--disable-gpu --no-sandbox` for
+  visible rendering; (2) macOS Notification Center widgets in the Tahoe
+  golden image occlude part of the Obsidian window area and should be
+  dismissed at VM setup time.
+
+### Absorb Sub-C trait amendments into B's design + types `[types]` `[amendment]`
+- **Status:** not_started
+- **Dependencies:** Task 0
+- **Description:** Sub-project C's brainstorm (Session 6 of the parent
+  orchestrator plan, 2026-04-13) produced **four additive amendments to
+  B's `HarnessSession` trait and `OutputChunkKind` enum, plus one
+  executor-level requirement**, all forced by C's locked Q1 decision
+  (bidirectional `stream-json`) and two post-write user clarifications
+  (disambiguating "no callback channel" as control-only and separating
+  task-level from protocol-level completion). All five changes post-date
+  B's brainstorm and must be absorbed *before* the "Define core abstractions
+  and types" task is started so that types are defined in their amended
+  shape from the outset rather than being rewritten mid-implementation.
+
+  **The five amendments** (sources: `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
+  commits `71fd307` and `b1a8cea`; cross-references in
+  `{{DEV_ROOT}}/Mnemosyne/LLM_STATE/mnemosyne-orchestrator/memory.md`
+  under the "Harness adapter layer" and "No slash commands inside the
+  harness" entries):
+
+  1. **`HarnessSession::send_user_message(&self, text)`** — new trait
+     method. TUI forwards user-typed messages into an in-flight session
+     mid-turn via this call. Required by C's Q1 (bidirectional stream-json
+     supports reading model output *and* forwarding user messages
+     simultaneously, no PTY needed).
+  2. **`HarnessSession` methods change from `&mut self` to `&self` with
+     `Send + Sync` bound.** The `ClaudeCodeSession` actor owns the only
+     mutable state; the trait surface is now shareable across threads.
+     This is what lets the executor clone an `Arc` to hand one handle to
+     the output drainer and another to the input forwarder.
+  3. **`LlmHarnessExecutor` storage changes from `Box<dyn HarnessSession>`
+     to `Arc<dyn HarnessSession>`** and gains a `user_input_sender()`
+     method that the TUI uses to wire user-typed messages into the
+     session. The executor now spawns **two threads** per session: an
+     output-drainer that reads `OutputChunk`s off the session and pushes
+     them to `output_tx`, and an input-forwarder that reads user messages
+     off a `crossbeam-channel` receiver and calls `send_user_message` on
+     the session.
+  4. **`OutputChunkKind` gains a `SessionLifecycle` variant** with
+     documented stable text formats `"ready"`, `"turn_complete:<subtype>"`,
+     and `"exited:<status>"`. This is the protocol-level observation
+     channel surfacing Claude Code's `result` events and session
+     state transitions without violating the "no control channel"
+     rule (observation is allowed; control is forbidden). See
+     memory.md "No slash commands inside the harness" for the
+     control-vs-observation distinction.
+  5. **`LlmHarnessExecutor` runs `Stdout` chunks through a configurable
+     completion-sentinel matcher with sliding-buffer detection.** This
+     is the task-level completion signal (distinct from protocol-level
+     `SessionLifecycle::TurnComplete`) — each phase prompt ends with
+     "when finished say READY FOR THE NEXT PHASE" and the executor
+     watches assistant-text output for that sentinel. Sentinel
+     detection lives in B (not C) because sentinels are coupled to
+     phase prompts (which B owns) and the mechanism is harness-agnostic.
+     The matcher must be sliding-buffer based (sentinel may span
+     multiple chunks) and configurable per phase.
+
+  **Work to perform.** (a) Update `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`
+  §2.2 (trait definitions) and §4.1 (`HarnessAdapter` / `HarnessSession`
+  trait shape) to record all five amendments inline, with a dated note
+  pointing at C's design doc as the origin. (b) Adjust the downstream
+  "Define core abstractions and types" task description so that its
+  type list includes the amended `OutputChunkKind::SessionLifecycle`
+  variant, `HarnessSession` surface (`&self` + `Send + Sync` +
+  `send_user_message`), and the executor-level sentinel-matcher type.
+  (c) If any other task in this backlog references `Box<dyn
+  HarnessSession>` or the old `&mut self` shape, update it consistently.
+  (d) Add a note to the `PhaseRunner::run_phase` task (and/or the
+  `LlmHarnessExecutor` task if separate) that the executor spawns two
+  threads per session and owns the sentinel matcher.
+
+  **No runtime code** — this task is spec + backlog editing only. It
+  exists as a gate so the downstream implementation tasks are written
+  against the correct contract. Acceptance: the spec and backlog are
+  internally consistent with C's design doc and with orchestrator
+  `memory.md`, verified by a manual re-read of §2.2, §4.1, and every
+  task description that touches `HarnessSession` / `OutputChunk` /
+  `LlmHarnessExecutor`.
 - **Results:** _pending_
 
 ### Define core abstractions and types `[types]`
 - **Status:** not_started
-- **Dependencies:** Task 0
+- **Dependencies:** Task 0, Absorb Sub-C trait amendments into B's design + types
 - **Description:** Define the Rust types from §2.2 of the spec:
   `PlanContext`, `PlanState`, `LastExit`, `Phase`, `ResolvedPaths`,
   `PhaseRunner`, `PhaseOutcome`, `PhaseEvent`, `PhaseError`,
@@ -462,4 +567,61 @@ best next task with input from the user.
   Obsidian (Dataview query examples for common views). Update the
   main Mnemosyne `README.md` with a brief "v0.2.0 orchestrator"
   section.
+- **Results:** _pending_
+
+### Adopt sub-M observability framework — phase lifecycle instrumentation + TUI bridge consumer `[m-adoption]`
+- **Status:** not_started
+- **Dependencies:** sub-M Task 12 (`ObservabilityHarness`) landed; this
+  task lives in B's backlog because B owns the call sites being
+  instrumented
+- **Description:** Landed by sub-project M's brainstorm
+  (2026-04-13, Session 7 of the mnemosyne-orchestrator plan). M's
+  design doc at
+  `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
+  §10 specifies M's cross-plan adoption requirements; this task is B's
+  share.
+
+  Concretely:
+  1. Add `tracing::instrument` annotations on `PhaseRunner::run_phase`
+     and on each `PhaseExecutor::execute` implementation. Span name
+     `phase`, fields `plan_id`, `phase`. The span context is consumed
+     by M's `MnemosyneEventLayer` to attribute events to the right
+     phase scope.
+  2. Emit `MnemosyneEvent::PhaseLifecycle` events at the numbered steps
+     of `PhaseRunner::run_phase`:
+     - Step 5: `PhaseLifecycleKind::Started { phase, plan_id, at }`
+     - Step 10: `PhaseLifecycleKind::ExitedClean { phase, transitioned_to, at }`
+     - Step 11: `PhaseLifecycleKind::ReflectHookFired { plan_id, at }`
+     - Interrupted-state path: `PhaseLifecycleKind::Interrupted { phase, forensics_dir, at }`
+     - ExecutorFailed path: `PhaseLifecycleKind::ExecutorFailed { phase, error, at }`
+     Use the `mnemosyne_event!` macro (provided by sub-M Task 6) rather
+     than calling `tracing::event!` directly.
+  3. Replace any draft `eprintln!`-style debug logging in `PhaseRunner`
+     with `mnemosyne_event!(Level::DEBUG, MnemosyneEvent::Diagnostic { ... })`
+     calls. The `EnvFilter` (from M Task 11) controls visibility; the
+     events are always emitted.
+  4. Wire `TuiBridgeLayer`'s `mpsc::Receiver<MnemosyneEvent>` into B's
+     TUI module event loop. The TUI should subscribe via
+     `harness.subscribe_tui()` (M Task 12 API) at startup and consume
+     events in the existing `tokio::select!` over the TUI input
+     channel + new MnemosyneEvent channel. Status bar gauges and the
+     event log tail panel render from this stream per §11.1 of M's
+     design doc.
+  5. Wire the Risk 5 dump path: in `PhaseRunner::run_phase`'s error
+     branches (steps 1-13 hard-error boundaries, executor failure
+     branch, interrupt branch), call
+     `observability::dump_event_tail(harness, session_id, plan_id, phase, 1000)`
+     before returning the error. The dump path is defined by sub-M
+     Task 13.
+
+  TDD: write tests that drive a fixture `PhaseRunner::run_phase` cycle
+  and assert the expected `MnemosyneEvent` sequence appears on the TUI
+  bridge channel. Layer 3 integration test exists in sub-M Task 19;
+  this task only needs unit tests on B's side.
+
+  No changes to B's existing trait surface or to the `PhaseEvent`
+  channel. Both B's `PhaseEvent` channel and M's `MnemosyneEvent` bus
+  coexist during the parallel-emit window. After M v1 ships and the
+  verification window passes, a future task collapses B's channel into
+  M's bus (deferred — not part of M v1 scope).
 - **Results:** _pending_

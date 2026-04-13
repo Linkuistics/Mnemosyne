@@ -423,3 +423,73 @@ The work phase picks the best next task with input from the user.
   cycles to verify p95 now passes. Update memory.md with the new
   measurements.
 - **Results:** _pending_
+
+### Task 25 — Adopt sub-M observability framework — actor instrumentation + parallel-emit migration of `SpawnLatencyReport` `[m-adoption]`
+- **Status:** not_started
+- **Dependencies:** sub-M Task 12 (`ObservabilityHarness`), sub-M Task 9
+  (`MetricsRecorderLayer`), this plan's Task 18 (where
+  `SpawnLatencyReport` is currently emitted)
+- **Description:** Landed by sub-project M's brainstorm
+  (2026-04-13, Session 7 of the mnemosyne-orchestrator plan). M's
+  design doc at
+  `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
+  §9 specifies the staged migration of C's `SpawnLatencyReport` onto M's
+  metrics framework via a parallel-emit window. This task is C's share.
+
+  **Phase 1 — parallel emit (this task lands).** Add `tracing::instrument`
+  annotations to `actor_loop` and the per-message handlers in C's actor.
+  Span name `harness_session`, fields `session_id`, `tool_profile`,
+  `harness_kind`. Span context propagates to all `mnemosyne_event!`
+  calls inside the actor.
+
+  Add parallel `metrics::histogram!` calls alongside C's existing
+  `SpawnLatencyReport` writer at the three latency-measurement points:
+
+  ```rust
+  use crate::observability::metric_names::{
+      HARNESS_COLD_SPAWN_LATENCY_MS,
+      HARNESS_FIRST_CHUNK_LATENCY_MS,
+      HARNESS_FIRST_OUTPUT_LATENCY_MS,
+  };
+
+  // alongside the existing report.write_to(<staging>/spawn-latency.json)
+  metrics::histogram!(HARNESS_COLD_SPAWN_LATENCY_MS).record(cold_spawn_ms);
+  metrics::histogram!(HARNESS_FIRST_CHUNK_LATENCY_MS).record(first_chunk_ms);
+  metrics::histogram!(HARNESS_FIRST_OUTPUT_LATENCY_MS).record(first_output_ms);
+  ```
+
+  Also emit:
+  - `metrics::counter!(HARNESS_SPAWNED).increment(1)` at successful spawn
+  - `metrics::counter!(HARNESS_EXITED_CLEAN).increment(1)` at clean exit
+  - `metrics::counter!(HARNESS_EXITED_ERROR).increment(1)` at error exit
+  - `metrics::gauge!(HARNESS_LIVE_SESSIONS).set(...)` on spawn / terminate
+
+  Wire the Risk 5 dump path: in C's actor error-handling branches
+  (every place an `AdapterError` propagates out), call
+  `observability::dump_event_tail(harness, session_id, plan_id, "harness", 1000)`
+  before returning the error. The dump path is defined by sub-M Task 13.
+
+  **DO NOT delete C's existing `SpawnLatencyReport` writer** in this
+  task. Both paths run in parallel during the verification window.
+  The verification test (sub-M Task 15) confirms the metric values
+  match the JSON file within ±10ms. Only after ≥10 consecutive CI
+  builds pass the verification does the v1.1 cleanup task delete C's
+  tactical writer (created automatically by sub-M's first triage
+  after the verification window closes).
+
+  **Phase 2 — cleanup (separate future task).** After the verification
+  window closes, a new task lands in this backlog from sub-M's triage
+  that:
+  1. Deletes C's `SpawnLatencyReport` struct definition.
+  2. Deletes the `<staging>/spawn-latency.json` writer call site.
+  3. Deletes the `InternalMessage` chunk delivery path for the
+     latency report.
+  4. Updates C's spec doc evolution log noting the migration is complete.
+  Sub-G's migration plan owns the staging schema cleanup
+  (`<staging>/spawn-latency.json` removed from the documented schema).
+
+  TDD: write tests that drive a fixture `actor_loop` cycle and assert
+  the expected metric updates appear in the registry snapshot. Layer 3
+  integration test exists in sub-M Task 15; this task only needs unit
+  tests on C's side.
+- **Results:** _pending_

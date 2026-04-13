@@ -276,3 +276,62 @@ tests. The work phase picks the best next task with input from the user.
   ingestion works at a conceptual level, when it fires, and how the review
   panel surfaces its activity.
 - **Results:** _pending_
+
+### Adopt sub-M observability framework — parallel-emit `MnemosyneEvent::Ingestion` alongside existing channel `[m-adoption]`
+- **Status:** not_started
+- **Dependencies:** sub-M Task 12 (`ObservabilityHarness`), Wire the
+  full pipeline end-to-end
+- **Description:** Landed by sub-project M's brainstorm
+  (2026-04-13, Session 7 of the mnemosyne-orchestrator plan). M's
+  design doc at
+  `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
+  §10 specifies M's cross-plan adoption requirements; this task is E's
+  share.
+
+  Concretely:
+  1. Add `tracing::instrument` annotations on each Stage 1-5 entry
+     point of the ingestion pipeline. Span names `ingestion_stage_1`,
+     `ingestion_stage_2`, etc., with fields `cycle_id`, `plan_id`,
+     `host_project`. The span context is consumed by M's
+     `MnemosyneEventLayer` to attribute ingestion events to the right
+     cycle scope.
+  2. **Parallel-emit** `MnemosyneEvent::Ingestion(_)` events alongside
+     the existing `IngestionEvent` channel emit. Every `Applied` /
+     `PromptRequired` / `Deferred` / `Rejected` / `ResearchSession` /
+     `CycleSummary` event flows BOTH to E's existing channel AND
+     through `mnemosyne_event!`. This is the safety-net pattern from
+     sub-M's design — both paths run concurrently until verification
+     proves M's path is complete and correct.
+  3. Emit metrics from the ingestion pipeline:
+     - `metrics::counter!(INGESTION_APPLIED).increment(1)` per
+       `Applied` event
+     - `metrics::counter!(INGESTION_DEFERRED).increment(1)` per
+       `Deferred` event
+     - `metrics::counter!(INGESTION_REJECTED).increment(1)` per
+       `Rejected` event
+     - `metrics::histogram!(INGESTION_CYCLE_DURATION_MS).record(...)`
+       at `CycleSummary` emission, measured from cycle start
+     - `metrics::gauge!(INGESTION_IN_FLIGHT_OPS).set(...)` updated as
+       ops enter and leave the Stage 5 sequential queue
+  4. Wire the Risk 5 dump path: in E's pipeline error-handling branches,
+     call `observability::dump_event_tail(harness, session_id, plan_id, "ingestion", 1000)`
+     before returning the error. The dump path is defined by sub-M
+     Task 13. Note that ingestion errors do NOT block the phase cycle
+     (per E's design rule — best-effort from the cycle's perspective);
+     they fail loudly into the explorer instead. The dump captures
+     the rich context for the explorer-side error surface.
+  5. **Future cleanup (separate task).** After M v1 ships and the
+     verification window passes, a future task lands in this backlog
+     from sub-M's triage that collapses E's standalone `IngestionEvent`
+     channel into M's `MnemosyneEvent::Ingestion(_)` bus — UI consumers
+     subscribe via M's `TuiBridgeLayer` instead of E's channel.
+     Deferred — not part of M v1 scope.
+
+  TDD: write tests that drive a fixture ingestion cycle and assert
+  both the existing `IngestionEvent` channel AND the M
+  `MnemosyneEvent::Ingestion(_)` events fire with matching content.
+
+  No changes to E's existing channel surface or to the `Applied` /
+  `PromptRequired` / etc. event types. Both E's channel and M's bus
+  coexist during the parallel-emit window.
+- **Results:** _pending_
