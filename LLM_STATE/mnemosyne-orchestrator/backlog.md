@@ -5,17 +5,27 @@ in approximately recommended order; the work phase picks the best next task with
 input from the user.
 
 Ordering reflects the sub-project dependency chain recorded in `{{PLAN}}/memory.md`:
-**~~E done~~ → ~~B done~~ → ~~C done~~ → A → F → D → H → I**, with **G** and the
-newly-surfaced **M (Observability)** running in parallel (placed last for
-file-order convenience, not priority), and **K/L** as parallel v1.5+ sidequests
+**~~E done~~ → ~~B done~~ → ~~C done~~ → ~~M done~~ → A → F → D → H → I**, with
+**G** running in parallel throughout and **K/L** as parallel v1.5+ sidequests
 (L is a small independent spike; K is the Obsidian plugin client that depends
-on B's implementation landing and on L's recommendation). Sub-project
-**J is obsolete** — folded into B as `ManualEditorExecutor`, see memory.md
-for the rationale. Sub-project **M (Observability — logging, metrics
-collection, display, analysis)** was surfaced during sub-project C's
-brainstorm (Session 6, 2026-04-13) as a new candidate; C's `SpawnLatencyReport`
-is a tactical seed that M will own and integrate into a broader event/metrics
-framework.
+on B's implementation landing and on L's recommendation). Sub-project **J is
+obsolete** — folded into B as `ManualEditorExecutor`, see memory.md for the
+rationale.
+
+**Sub-project M (Observability) brainstormed in Session 7 (2026-04-13)** —
+design doc at
+`{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
+(commit `53f7d4e`), sibling plan at
+`{{PROJECT}}/LLM_STATE/sub-M-observability/` with 23 implementation tasks.
+Hybrid `tracing` + typed `MnemosyneEvent` enum architecture; five standard
+crates; one ~200-line custom Layer. C's tactical `SpawnLatencyReport` migrates
+via a parallel-emit window with mechanical ±10ms verification. Risk 5 resolved
+via `InMemoryRingLayer::dump_session`. Adoption tasks landed in sub-B / sub-C /
+sub-E sibling backlogs by the brainstorm itself; sub-D / sub-F / sub-H / sub-I /
+sub-G adoption tasks are queued in sub-M's memory.md and land as those
+sub-projects' brainstorms complete. Architectural decisions distilled into
+`{{PLAN}}/memory.md` under "Always-on instrumentation; tactical measurement
+disclaims framework scope" and the new "Hybrid tracing + typed events" entry.
 
 **The Obsidian symlink validation spike PASSED 6/6 on both platforms** in
 Session 5 (2026-04-13) — driven via the `guivision` CLI against
@@ -51,145 +61,8 @@ raw session record is in `{{PLAN}}/session-log.md`.
 
 ## Task Backlog
 
-### Brainstorm sub-project C — harness adapter layer `[brainstorm]`
-- **Status:** done
-- **Dependencies:** none (sub-projects B and E both complete; their cross-cutting
-  requirements for C are captured in `{{PLAN}}/memory.md` and expanded below)
-- **Description:** Design the adapter abstraction over Claude Code, Codex, Pi,
-  and future harnesses. Cover: spawn semantics, prompt passing (CLI arg vs.
-  stdin vs. file), output capture, terminal/PTY handling, lifecycle (start /
-  attach / detach / end), what's common across adapters and what's per-adapter,
-  v1 scope (one harness or multiple), how missing harnesses are detected and
-  reported.
-
-  **Priority note.** C is the next brainstorm pick. It is B's critical sibling
-  dependency for swapping B's temporary `LlmHarnessExecutor` stub to a real
-  implementation — C landing unblocks B's v1 dogfood acceptance test.
-
-  **Requirements inherited from sub-project B** (see `{{PLAN}}/memory.md` and
-  B's design doc §4.1):
-  - `HarnessAdapter` trait shape is specified by B; C implements against that
-    shape. The trait covers spawn, prompt passing, one-way streaming output,
-    lifecycle, and tool profile application.
-  - **No harness-to-Mnemosyne callback channel.** Per the "no slash commands
-    in the harness" architectural decision, output streams are one-way only.
-    Every user action must flow through Mnemosyne's TUI, never through harness
-    slash commands or callbacks.
-  - **Cold-spawn budget: <3s** — honoured jointly with E's ingestion pipeline
-    viability requirement. The five-stage pipeline dies if spawn is slow.
-  - **Fixture-replay mode is mandatory**, not optional. B's `FixtureReplayExecutor`
-    is a first-class `PhaseExecutor` implementor and drives deterministic
-    testing of the phase cycle. C's adapter layer must support a replay mode
-    that reads canned harness output from test fixtures.
-  - **v1 may ship Claude Code only.** The adapter abstraction must exist in
-    v1 (for `FixtureReplayExecutor` alone) but only one real harness needs
-    an implementor. Codex and Pi adapters can follow.
-
-  **Requirements inherited from sub-project E** (see `{{PLAN}}/memory.md`):
-  configurable tool profiles at spawn time — `IngestionMinimal` and
-  `ResearchBroad` are the minimum profile set, since Mnemosyne's own internal
-  reasoning sessions (ingestion Stage 3/4, research modals) are a first-class
-  call site, not just user-facing plan sessions. Runtime tool enforcement
-  must happen at the adapter level, not as prompt suggestion. The adapter
-  also needs streaming output support so long-running sessions can surface
-  partial progress.
-
-  Output: design doc at `{{PROJECT}}/docs/superpowers/specs/2026-MM-DD-sub-C-adapters-design.md`
-  and a sibling plan at `{{PROJECT}}/LLM_STATE/sub-C-adapters/`.
-- **Results:** **DONE in Session 6 (2026-04-13).** Brainstorm produced the
-  full design via the `superpowers:brainstorming` skill across five locked
-  decision points plus two post-write user clarifications. Outputs:
-  - **Design doc**: `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
-    (1311 lines, two commits: `71fd307` initial + `b1a8cea` post-write
-    amendment).
-  - **Sibling implementation plan**: `{{PROJECT}}/LLM_STATE/sub-C-adapters/`
-    (commit `9dac743`), with 24 unconditional implementation tasks plus
-    2 conditional warm-pool tasks gated on the C-1 dogfood acceptance
-    criterion.
-
-  Five locked decisions: **(Q1) bidirectional `--input-format stream-json
-  + --output-format stream-json` process model** (no PTY, no terminal
-  parsing — Claude Code's structured I/O on stdin/stdout supports both
-  reading model output and forwarding user-typed messages mid-session,
-  resolving the "user wants live interaction" constraint without going
-  to PTY). **(Q2) `src/harness/` module** under the existing single
-  binary crate (no workspace conversion). **(Q3) Cold-spawn only in v1**,
-  warm-pool work conditional on a measurable acceptance gate (`C-1`:
-  p95 < 5s across N≥10 dogfood cycles); a half-day warm-pool reset
-  spike (3-check protocol: structured envelope → `/clear`-as-text →
-  pre-spawned single-use degradation) fires only if C-1 trips. **(Q4)
-  JSON Lines `FixtureRecord` format** (`Output`/`Delay`/`ExpectUserInput`/`Exit`
-  records) recorded via a new `mnemosyne dev record-fixture` subcommand
-  driving the real adapter under instrumentation. **(Q5) Two-profile
-  CLI flag mapping** (`IngestionMinimal` → `--allowed-tools "" --permission-mode default`;
-  `ResearchBroad` → no allowed-tools flag + `--permission-mode acceptEdits`)
-  with stream-side defence-in-depth tool enforcement as the second layer.
-
-  Two mid-design revisions surfaced via user pushback: **actor-style
-  `ClaudeCodeSession`** with single-owner-per-state discipline (three
-  threads per session: actor + stdout-reader + stderr-reader; all
-  mutable state in the actor; `crossbeam-channel` for typed inboxes/
-  outboxes; replaces the original interior-mutability sketch), and
-  **process-group termination as a v1 correctness requirement**
-  (`process_group(0)` at spawn, `nix::sys::signal::killpg` at
-  terminate, two-phase SIGTERM→SIGKILL escalation with 500ms grace;
-  not deferred to v1.5).
-
-  Two post-write user clarifications added in commit `b1a8cea`:
-  **(1) The "no callback channel" rule disambiguated** — it forbids
-  *control* flowing from harness to Mnemosyne (slash commands, programmatic
-  callbacks), not *observation* of harness state. Resolved by adding an
-  `OutputChunkKind::SessionLifecycle` variant (fourth amendment to B's
-  trait) with documented stable text formats `"ready"` /
-  `"turn_complete:<subtype>"` / `"exited:<status>"` for protocol-level
-  state observation. **(2) Task-level vs protocol-level completion
-  separated** — protocol-level "turn over" (Claude Code's `result` event,
-  surfaced as `SessionLifecycle`) is necessary but not sufficient; what
-  the user actually wants is "the LLM has decided the work is done",
-  detected via prompt-instructed sentinel strings (e.g. "READY FOR
-  REFLECT") that B's executor watches for in `Stdout` chunks via a
-  sliding-buffer matcher. Sentinel detection lives in B (not C) because
-  sentinels are coupled to phase prompts (which B owns), the mechanism
-  is harness-agnostic, and C should stay focused on harness mechanics.
-
-  **Cross-sub-project requirements going back to Sub-B**: four additive
-  trait amendments + one executor-level requirement, all forced by Q1
-  and the post-write clarifications, all post-dating B's brainstorm:
-  (1) `HarnessSession::send_user_message(&self, text)` new method;
-  (2) `HarnessSession` methods change from `&mut self` to `&self` with
-  `Send + Sync` bound; (3) `LlmHarnessExecutor` storage changes from
-  `Box<dyn HarnessSession>` to `Arc<dyn HarnessSession>` and gains a
-  `user_input_sender()` TUI-facing method, spawning two threads
-  (output-drainer + input-forwarder); (4) `OutputChunkKind` gains a
-  `SessionLifecycle` variant; (5) `LlmHarnessExecutor` runs `Stdout`
-  chunks through a configurable completion-sentinel matcher with
-  sliding-buffer detection. These amendments land in B's implementation
-  phase, not as a B re-brainstorm. Sub-B's sibling-plan needs an
-  amendment task added during its next triage to absorb them.
-
-  **New sub-project surfaced**: **Sub-M (Observability — logging,
-  metrics collection, display, analysis)**. C's `SpawnLatencyReport` is
-  a tactical seed specific to the C-1 acceptance gate, not the start of
-  a metrics framework. Sub-M will own the broader story (structured
-  logging crate choice, event bus design, metrics aggregation, Obsidian
-  explorer integration, the relationship to E's ingestion event stream).
-  Added to this backlog as a new brainstorm candidate alongside G.
-
-  **Three new Cargo deps** justified individually under
-  integration-over-reinvention: `which` (binary discovery), `nix`
-  (`killpg` for process-group termination), `crossbeam-channel`
-  (`Sync` channels for the actor architecture). No PTY crate, no
-  tokio, no async runtime.
-
-  **C-1 acceptance gate** is the swap-in moment for sub-B's stub
-  adapter: when the dogfood orchestrator plan completes 10 full
-  work → reflect → triage cycles against the real `ClaudeCodeAdapter`
-  on the user's primary dev machine with p95 cold-spawn < 5s, both C
-  v1 and (jointly) B v1 are accepted. The real adapter then becomes
-  B's adapter of record permanently.
-
 ### Brainstorm sub-project A — DEV_ROOT global knowledge store `[brainstorm]`
-- **Status:** not_started
+- **Status:** done
 - **Dependencies:** none (B brainstorm has fixed the vault framing; A finalises
   the vault location and config override mechanism)
 - **Description:** Design the relocation of the Mnemosyne global knowledge store
@@ -233,7 +106,42 @@ raw session record is in `{{PLAN}}/session-log.md`.
 
   Output: design doc at `{{PROJECT}}/docs/superpowers/specs/2026-MM-DD-sub-A-global-store-design.md`
   and a sibling plan at `{{PROJECT}}/LLM_STATE/sub-A-global-store/`.
-- **Results:** _pending_
+- **Results:** **Done 2026-04-13 (Session 7).** Design doc at
+  `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-A-global-store-design.md`
+  (commit `c81fd48`); sibling plan at `{{PROJECT}}/LLM_STATE/sub-A-global-store/`
+  with a fifteen-task implementation backlog (commit pending in this
+  session). The brainstorm locked five forking decisions (discovery
+  model, init flow shape, gitignore policy, migration scope, identity
+  verification) through clarifying questions and then presented five
+  design sections for section-by-section approval. Key decisions:
+  **(1) Vault discovery is explicit** via `--vault` flag → `MNEMOSYNE_VAULT`
+  env var → user config file (`dirs::config_dir().join("mnemosyne/config.toml")`)
+  → hard error; no walk-up, no implicit dev-root concept. **(2) Vault
+  identity** is verified by a `<vault>/mnemosyne.toml` marker with
+  schema-versioned `[vault]` table; the same file hosts optional
+  override sections for language profiles and context mappings,
+  eliminating the dotfile-without-extension. **(3) `init` has two
+  subcommands**: `mnemosyne init <path>` (fresh, default path
+  `~/Mnemosyne-vault/`) and `mnemosyne init --from <git-url> [<path>]`
+  (clone); plus `mnemosyne config use-vault <path>` (switch vault) and
+  `mnemosyne adopt-project <project-path>` (per-machine symlink
+  mount). **(4) Gitignore policy**: track `knowledge/`, `archive/`,
+  curated `.obsidian/` subset, and `mnemosyne.toml`; gitignore
+  `runtime/`, `cache/`, `projects/`, and noisy workspace files.
+  **(5) Migration scope dropped** because Mnemosyne has no real v0.1.0
+  users — the `migrate` subcommand does not exist, and v0.1.0's
+  hardcoded `~/.mnemosyne/` paths in `src/main.rs` plus
+  `Config::load(dir)` in `src/config.rs` are deleted outright in B's
+  implementation (task 11 and task 12 of sub-A's sibling plan).
+  Tier 1 / Tier 2 roots are independently addressable with env-var
+  overrides (`MNEMOSYNE_TIER1_ROOT`, `MNEMOSYNE_TIER2_ROOT`) for
+  test fixtures, satisfying E's requirement. Surfaced one new
+  project-wide open question ("Team-mode usage of Mnemosyne") which
+  has been appended to `{{PLAN}}/memory.md`. Produced five
+  `{{PLAN}}/memory.md` updates (new entries for explicit discovery,
+  schema-versioned marker identity, v0.1.0-is-deletable-not-transitionable;
+  update to the existing "Global knowledge store moves from `~/.mnemosyne/`"
+  entry; update to the Sub-projects table row for A).
 
 ### Brainstorm sub-project F — plan hierarchy and permanent root plan `[brainstorm]`
 - **Status:** not_started
@@ -503,66 +411,13 @@ raw session record is in `{{PLAN}}/session-log.md`.
   and a sibling plan at `{{PROJECT}}/LLM_STATE/sub-G-migration/`.
 - **Results:** _pending_
 
-### Brainstorm sub-project M — observability (logging, metrics, display, analysis) `[brainstorm]`
-- **Status:** not_started
-- **Dependencies:** none (parallel-able with all other brainstorms; surfaced
-  during sub-project C's brainstorm in Session 6, 2026-04-13)
-- **Description:** Design Mnemosyne's observability framework. Cover:
-  structured logging strategy (crate choice — `tracing` / `slog` / `log` /
-  custom; subscriber configuration; per-module log levels), event bus
-  shape (how phase events, harness lifecycle events, ingestion events,
-  user actions, error variants, and tactical instrumentation reports flow
-  to a single typed event stream), metrics aggregation (counters,
-  histograms, gauges; in-memory ring buffer vs. file-backed; per-session
-  / per-plan / per-process scopes), display surfaces (live in the
-  Ratatui TUI, persistent in Obsidian via Dataview queries, exported to
-  external tools), analysis tooling (querying historical events,
-  computing percentiles, surfacing anomalies), the relationship to
-  sub-project E's ingestion event stream (which is itself a kind of
-  event stream and should compose cleanly with whatever M designs),
-  the relationship to sub-project I's Obsidian coverage (events and
-  metrics are explorer surfaces too), the migration path for C's
-  tactical `SpawnLatencyReport` instrumentation onto the new framework.
-
-  **Surfaced during sub-project C's brainstorm.** C's design deliberately
-  ships a *tactical* `SpawnLatencyReport` instrumentation that is
-  emitted as an `InternalMessage` chunk and written to
-  `<staging>/spawn-latency.json` — purpose-built for the C-1 acceptance
-  gate and explicitly *not* the start of a metrics framework. C's
-  design records a forward-pointer to this proposed sub-project M so
-  that future maintainers know the broader observability story has its
-  own home, and so M's brainstorm starts from a clean slate without
-  having to retrofit a tactical artifact into the architectural shape.
-  See §11.5 of C's design doc.
-
-  **Cross-cutting requirement on every sub-project.** Once M lands, every
-  other sub-project's "I want to know what's happening inside this
-  component" question routes through M's framework rather than through
-  ad-hoc `eprintln!`-style logging or per-component metrics collection.
-  M should therefore be brainstormed early enough that B, C, D, and E
-  can adopt it during their implementation phases rather than retrofitting
-  later. Parallel-able with G — both can run any time.
-
-  **Risk acknowledgement (from C's spec, §9 Risk 5).** v1 of C ships
-  with diagnostic-poor failure modes — when a session fails in a way
-  the actor doesn't anticipate, the user sees the message but no rich
-  context (no recent output buffer, no per-thread state dump). C
-  records this as an *accepted* v1 limitation pointing at this sub-project
-  as the future home for structured logging. M's brainstorm should
-  treat that limitation as a concrete first-day requirement: the
-  framework must support "give me the last N events from session X
-  with full context" as a primary diagnostic operation.
-
-  Output: design doc at `{{PROJECT}}/docs/superpowers/specs/2026-MM-DD-sub-M-observability-design.md`
-  and a sibling plan at `{{PROJECT}}/LLM_STATE/sub-M-observability/`.
-- **Results:** _pending_
-
 ### Decide v1 scope cut `[decision]`
 - **Status:** not_started
 - **Dependencies:** all sub-project brainstorms (~~E done~~, ~~B done~~,
-  ~~C done~~, A, F, D, H, I, G, M — plus sub-project L's short spike if
-  K is being considered for v1.5 alongside v1). J is obsolete (folded
-  into B). K is explicitly v1.5+ and not part of the v1 scope cut.
+  ~~C done~~, ~~M done~~, A, F, D, H, I, G — plus sub-project L's short
+  spike if K is being considered for v1.5 alongside v1). J is obsolete
+  (folded into B). K is explicitly v1.5+ and not part of the v1 scope
+  cut.
 - **Description:** Once every in-scope sub-project has been brainstormed
   and its design doc and implementation plan exist, decide what's actually
   in v1 vs. deferred to v2. Update `{{PLAN}}/memory.md` with the v1 cut.

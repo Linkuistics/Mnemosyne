@@ -660,3 +660,268 @@
     land in exactly the sections that "want" it is much easier to
     maintain than a spec where a small change ripples through many
     unrelated sections.
+
+### Session 7 (2026-04-13) — sub-project M (Observability) brainstorm
+
+- **Attempted:** Brainstormed sub-project M (the observability framework
+  surfaced during sub-project C's brainstorm in Session 6). Picked M over
+  the default top-priority sub-project A on the cross-cutting argument:
+  every other sub-project's structured-logging needs route through M, so
+  brainstorming M before B / D / E / etc. enter heavy implementation
+  avoids retrofitting tactical instrumentation seeds onto the framework
+  later. Used the `superpowers:brainstorming` skill end-to-end: explored
+  context (B / C / E design docs, current Mnemosyne crate which has
+  zero existing structured-logging dep), drove two focused clarifying
+  questions, presented the full design in one pass after the user
+  signalled "use existing tooling and libraries wherever possible — this
+  is not an interesting task", got approval, wrote the spec doc, did
+  spec self-review (fixed three small inconsistencies), got user
+  approval on the written spec, then created the sibling LLM_CONTEXT
+  plan with all seven plan files plus the 23-task implementation
+  backlog. Finally landed M's adoption tasks directly into the three
+  existing sibling backlogs (sub-B, sub-C, sub-E) per §10 of the design
+  doc — M owns its own cross-plan adoption coordination rather than
+  deferring it to triage.
+- **What worked:**
+  - **The "single architectural fork question" framing.** Q1 (north
+    star: diagnostic / live / analysis / all three) and Q2 (foundation:
+    pure tracing / pure typed bus / hybrid) collapsed the full
+    observability design space into two real decisions. Once the user
+    answered "all three balanced" + "hybrid", the rest of the design
+    fell out mechanically — crate stack, layer composition, storage
+    layout, metric catalogue, and migration strategy were all forced
+    by those two answers. Ten queued clarifying questions (storage
+    shape, scope keys, display surfaces, analysis tooling, ...) all
+    had standard-tool answers under the user's "not an interesting
+    task" steer and didn't need separate rounds.
+  - **User steer dramatically accelerated the brainstorm.** "Use
+    existing tooling and libraries wherever possible. This is not an
+    interesting task." was the signal to stop framing every decision
+    as a fork and start picking the boring/standard answer at every
+    one. Compressed what would have been 5-8 more clarifying rounds
+    into a single design-presentation message. The brainstorming
+    skill's checklist was respected (every step happened) but the
+    rounds collapsed where the user explicitly de-prioritised the
+    interesting-architectural-decision framing.
+  - **Cross-plan adoption tasks landed immediately as part of the
+    brainstorm output, not deferred.** §10 of the design doc commits
+    M to owning its own adoption coordination ("M's deliverable, not
+    triage scope"). Concretely: this brainstorm appended adoption
+    tasks to sub-B-phase-cycle/backlog.md, sub-C-adapters/backlog.md,
+    and sub-E-ingestion/backlog.md before stopping the session.
+    Tasks for sub-D / sub-F / sub-H / sub-I / sub-G are queued in
+    sub-M's memory.md with a triage rule that lands them as those
+    sibling brainstorms complete. This closes a coordination gap that
+    would otherwise have forced triage to discover the requirement
+    later.
+  - **Hybrid tracing + typed events is the right architectural
+    answer for Mnemosyne's two competing principles.** "Integration
+    over reinvention" pushes hard at `tracing` (the de facto Rust
+    standard, mature ecosystem, span semantics for free). "Every
+    state transition is a typed message; hard errors by default"
+    pushes hard at a custom typed-event-enum bus. The hybrid honours
+    both: typed `MnemosyneEvent` enum at the Mnemosyne boundary
+    (downstream consumers exhaustively pattern-match), `tracing`
+    transport / spans / async-instrumentation below the boundary
+    (stock `tracing-subscriber` Layer pattern, third-party crate
+    events flow through automatically). Custom code is bounded to
+    one ~200-line `Layer`. This pattern generalises to any future
+    cross-cutting sub-project that has the same two-principle
+    tension.
+  - **The staged migration of C's `SpawnLatencyReport`** (parallel-
+    emit window with mechanical ±10ms verification) is exactly the
+    pattern future tactical-seeds-becoming-framework-features should
+    follow. C v1 ships the tactical writer; M v1 lands the parallel
+    `metric!` calls; M v1.1 deletes C's writer after the verification
+    window passes; sub-G's migration deletes the staging-schema entry.
+    Every step is independently reversible until the verification
+    proves M's data matches C's ground-truth. This pattern should
+    generalise to B / D / E if they grow tactical seeds before M
+    lands.
+  - **C's "observability-friendly" architectural posture turned out
+    to be load-bearing.** C's design deliberately documented
+    "every state transition is a typed message, every error is a typed
+    variant" without committing to a logging crate. That posture
+    meant retrofitting M onto C is purely additive (`tracing::instrument`
+    on actor handlers, `metric!` calls at three measurement points)
+    rather than requiring a redesign. This validates the "leave
+    yourself observability-friendly without committing to a framework"
+    discipline for future sub-projects that ship before M's
+    framework lands.
+- **What didn't work / what surprised:**
+  - **Initial framing of M as "interesting and exotic" was wrong.**
+    My queued clarifying questions assumed observability would need
+    multiple rounds of architectural fork decisions (storage shape,
+    scope strategy, display surfaces, analysis tooling, ...). The
+    user's steer correctly diagnosed that none of these were
+    interesting — they all had standard-tool answers under the
+    "integration over reinvention" principle once the foundation
+    decision (tracing + typed events hybrid) was made. Lesson for
+    future cross-cutting brainstorms: after the architectural fork
+    question lands, check whether the remaining decisions are
+    actually forks or just "pick the standard tool" — and if the
+    latter, collapse them into a single design-presentation message
+    rather than asking N more rounds.
+  - **The `mnemosyne_event!` macro typed-payload handoff is
+    open-ended in a way the spec doesn't fully resolve.** Spec §16 Q1
+    leaves the handoff approach (thread-local trick vs `Visit` API +
+    serde round-trip) as a day-1 microbenchmark for the implementer
+    to pick. Both approaches will work; one will be faster. This is
+    the right level of openness — committing to a specific approach
+    in the spec without measurement would be premature optimisation
+    in either direction. Implementation-phase task 5 owns the
+    decision.
+- **What to try next:** Sub-project A is the natural next pick — it
+  remains the highest-priority not-started brainstorm with simplified
+  scope (B fixed the vault layout, A finalises location / config
+  override / init flow). After A, the next brainstorm pick is
+  judgement: F (plan hierarchy, must respect B's contracts), D
+  (concurrency, soft-dependent on A's vault root), or H (skills fold,
+  mechanical). All three are independent enough to run in any order;
+  pick by topic affinity / momentum at the next work session.
+- **Key learnings:**
+  - **"Use existing tooling and libraries wherever possible" is a
+    project-wide principle for cross-cutting concerns.** When a
+    sub-project's scope is "design infrastructure that everything
+    else uses," the right default is to pick the standard tool at
+    every decision and bound the custom code as tightly as possible.
+    M's custom code is one ~200-line `tracing-subscriber::Layer`;
+    everything else is composing standard layers. This sets the
+    reference point for future cross-cutting brainstorms (D, F, H, I)
+    — they should ask "what existing crate covers this ground" before
+    asking "what should we build."
+  - **"M owns its own cross-plan adoption" is a brainstorm-output
+    discipline, not just a §10 documentation note.** The brainstorm
+    actually appended adoption tasks to three sibling backlogs as
+    part of the session output, before stopping. Triage was not
+    asked to schedule the coordination — the brainstorm itself
+    delivered it. This is the right pattern for any future
+    cross-cutting sub-project: the brainstorm session that produces
+    the design doc also produces the adoption stubs in every
+    affected sibling backlog. Future brainstorms (D, F, H, I, etc.)
+    should follow this discipline if their scope is cross-cutting.
+  - **Hybrid (tracing + typed events) generalises beyond
+    observability.** The architectural pattern — own type discipline
+    at the boundary, lean on `tracing` for everything below the
+    boundary — is reusable for any future component that has typed
+    state transitions and wants spans / async-context / third-party
+    integration without a custom event bus. This is worth recording
+    in the orchestrator memory as a project-wide pattern, not just
+    a sub-M decision.
+  - **Brainstorming a cross-cutting sub-project early pays for
+    itself in avoided rework.** M was promoted from the tail of
+    the backlog to position 2 in Session 6's triage specifically
+    because every other sub-project's structured-logging needs
+    route through M. Brainstorming M before D / F / H / I means
+    those sub-projects' implementation phases pick up M's
+    framework directly rather than retrofitting later. The cost
+    is paid now (one brainstorm session); the benefit compounds
+    across every other sub-project's implementation.
+  - **Skill-driven brainstorm + user-driven steer is a strong
+    combination.** The `superpowers:brainstorming` skill provided
+    the structural discipline (explore → questions → approaches →
+    design → spec → review → plan); the user's mid-brainstorm steer
+    ("not an interesting task") provided the velocity-shaping
+    decision. Neither alone would have produced this session — the
+    skill kept the structure intact while the user's steer kept the
+    pace honest. Lesson: skill checklists are fine but they're not
+    a substitute for the user's judgement about which decisions
+    deserve careful exploration vs which deserve a one-pass
+    standard-answer pass.
+
+### Session 8 (2026-04-13) — sub-project A brainstorm: vault location, discovery, and bootstrap
+- Attempted: the full brainstorm for sub-project A — design the
+  Mnemosyne vault's directory layout, how the binary discovers it,
+  how `mnemosyne init` bootstraps a fresh one, how existing
+  `~/.mnemosyne/` installations migrate, git-tracking policy,
+  Tier 1 / Tier 2 addressability for E, and the cross-sub-project
+  contracts A locks.
+- Worked: five forking decisions were driven through clarifying
+  questions before any design surface was presented —
+  (1) discovery model (explicit env var → user config → flag,
+  no walk-up),
+  (2) init flow shape (two non-interactive subcommands: fresh and
+  clone),
+  (3) gitignore policy (track knowledge + archive + curated
+  `.obsidian/`; gitignore runtime, cache, projects symlinks,
+  workspace files),
+  (4) migration scope (dropped entirely — user confirmed no real
+  v0.1.0 usage),
+  (5) vault identity (schema-versioned `mnemosyne.toml` marker,
+  later merged with the optional-override config into a single
+  file at user suggestion).
+  After the five locks, five design sections were presented for
+  section-by-section approval (layout, discovery, init, Tier 1 /
+  Tier 2, cross-sub-project contracts). Every section was
+  approved with at most one round of revision. The brainstorm
+  produced the authoritative spec at
+  `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-A-global-store-design.md`
+  (commit `c81fd48`) and the sibling plan at
+  `{{PROJECT}}/LLM_STATE/sub-A-global-store/` with a
+  fifteen-task implementation backlog (commit landed in this
+  session after the spec).
+- Didn't work / friction: one mid-design correction about the
+  symlink target (pointing at `<project>/` vs `<project>/mnemosyne/`)
+  was applied and then walked back when the user re-checked
+  memory.md and confirmed `<project>/mnemosyne/` is the renamed
+  `LLM_STATE/`, not a single plan. Lesson: when "revising" a
+  decision from memory.md, the first action should be re-reading
+  the entry to confirm the current framing, not "how would I
+  improve it." Memory entries are dense and easy to misread under
+  reasoning pressure.
+- To try next: pick another brainstorm from the orchestrator
+  backlog. Highest-priority unblocked candidates are F (plan
+  hierarchy), D (concurrency — soft-depends on A, now done), H
+  (skills fold-in), I (Obsidian coverage), or G (migration
+  strategy, parallelisable throughout). L (terminal plugin spike)
+  is also fully independent and small.
+- Key learnings:
+  - **"No real users" is a compounding simplification.** The
+    single constraint dropped an entire CLI subcommand
+    (`migrate`), an entire decision dimension (preserve-vs-fresh
+    git history), eliminated eight hardcoded `~/.mnemosyne/` paths
+    in `main.rs` as deletable rather than transitionable, and
+    killed one config file format (the v0.1.0 YAML `config.yml`
+    → moved to embedded defaults + optional overrides inside
+    `mnemosyne.toml`). Cross-sub-project sub-project brainstorms
+    should test their scope assumptions against "what if there
+    are no real users of the thing I'm replacing" — the answer
+    often drops migration scope wholesale.
+  - **Merging the vault marker file into the config file was a
+    late improvement.** The initial design had `.mnemosyne-vault`
+    (marker) + `config.toml` (optional overrides) as two separate
+    files. User pointed out the dotfile-without-extension was
+    awkward and suggested merging them into `mnemosyne.toml` at
+    the vault root. This mirrors `Cargo.toml`'s "project marker +
+    config" pattern, eliminates the dotfile, and costs nothing
+    because the key spaces never overlap. Small moves like this
+    matter — they clarify the design for human readers without
+    changing the semantics.
+  - **Each clarifying question should lock a specific fork
+    before moving on.** Earlier brainstorms (M) sharpened this
+    pattern. Sub-A followed it consistently: Q1 (discovery model)
+    → Q2 (init flow) → Q3 (gitignore) → Q4 (migration) → Q5
+    (marker). By the time the five design sections were presented,
+    every section's content was already determined by the locked
+    decisions; sections were presentation + verification, not
+    fresh design discussion. Five questions in one session
+    produced a fully specified spec.
+  - **Cross-cutting adoption stubs are now a reflex.** Sub-A's
+    sibling plan includes task 13: author `mnemosyne_event!`
+    calls at vault discovery, init, and adopt-project boundaries
+    as a placeholder for when sub-M's framework lands. This is
+    the "cross-cutting brainstorms own their own sibling adoption
+    stubs" discipline established by M, now applied by A to M.
+    The pattern scales: sub-A is consumed by M in the other
+    direction from how M was authored, but the stub obligation
+    flows both ways. Every future brainstorm should continue
+    checking M's adoption stubs list against its own boundaries.
+  - **The spec dropped from ~12 questions to 5 because the user
+    stopped one round to say "we have no existing mnemosyne
+    usage."** A useful pattern: when a brainstorm starts
+    generating questions about migration, backwards compat, or
+    transition strategy, check whether those scopes are real
+    before driving them through the forks exercise. A single
+    well-placed constraint from the user can collapse hours of
+    unnecessary design work. In this session it landed at Q4
+    and compressed the remaining forks significantly.
