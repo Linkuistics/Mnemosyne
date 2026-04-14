@@ -335,16 +335,9 @@ Sub-project design docs are in [`docs/superpowers/specs/`](docs/superpowers/spec
 
 The comprehensive architectural overview is in [`docs/architecture.md`](docs/architecture.md). Research sources grounding the design are in [`docs/research-sources.md`](docs/research-sources.md).
 
-## Related projects
+## Relationship to LLM_CONTEXT
 
-Mnemosyne accumulates knowledge from and supports AI-assisted work on all Linkuistics projects:
-
-- **[APIAnyware-MacOS](https://github.com/Linkuistics/APIAnyware-MacOS)** — macOS API surface code generator; FFI-heavy
-- **[GUIVisionVMDriver](https://github.com/Linkuistics)** — VM orchestration CLI for GUI testing
-- **[Modaliser-Racket](https://github.com/Linkuistics)** — Racket port of the Modaliser modal-navigation keyboard launcher for macOS
-- **[RacketPro](https://github.com/Linkuistics)** — Racket IDE enhancements
-- **[TestAnyware](https://github.com/Linkuistics/TestAnyware)** — VM management and GUI testing strategies
-- **[*Pro IDEs](https://github.com/Linkuistics)** — language-specific IDE enhancements
+Mnemosyne is the successor to **LLM_CONTEXT**, the earlier Linkuistics project that ships the four-phase work cycle (work → reflect → compact → triage), the phase-file-factored plan layout, and the `run-plan.sh` driver that Mnemosyne's persistent-daemon architecture absorbs and extends. LLM_CONTEXT continues to ship unchanged until Mnemosyne v1 is demonstrably equivalent or better; the migration lands in sub-G. Until then, bootstrap discipline applies: this plan and all sub-project plans run on LLM_CONTEXT's machinery, not on Mnemosyne's own.
 
 ## License
 
