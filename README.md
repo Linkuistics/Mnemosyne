@@ -1,207 +1,351 @@
 # Mnemosyne
 
-> Long-term, cross-project knowledge for AI-assisted development.
+> A persistent actor daemon for AI-assisted development.
+> Plans, phases, knowledge, and fresh-context reasoning, unified.
 
 A [Linkuistics](https://github.com/Linkuistics) project.
 
 ---
 
-Mnemosyne builds long-term, hierarchically organised, cross-linked global memory for LLM-driven development. It simulates how senior developers accumulate expertise across projects, tools, languages, and domains -- and makes that knowledge available to AI agents working on any project.
+## The problem
 
-Named after the Greek Titaness of memory and mother of the nine Muses, Mnemosyne represents the preservation of knowledge across time and context.
+AI coding assistants start every session from scratch. Even within a single session they accumulate context until it rots. Knowledge from yesterday vanishes by tomorrow. Cross-project learning is impossible. Long-running development — the kind that actually matters on real projects — drowns in the mismatch between the way developers think (continuous, hierarchical, specialist-consulting) and the way stateless LLM sessions work.
 
-## Why Mnemosyne Exists
+Senior developers are effective because they carry expertise across projects, ask each other questions, bring different perspectives to shared problems, and reflect on what they've learned over years. AI assistants today have none of that. **Mnemosyne gives them the architectural primitives to build it.**
 
-AI coding assistants start every session from scratch. They have no memory of what they learned yesterday -- which patterns worked, which approaches failed, what the team prefers. Senior developers are effective precisely because they carry this cross-project, cross-language knowledge. Mnemosyne gives AI agents the same advantage.
+## The vision
 
-The problem is scale: a developer works on dozens of projects over years. You can't load all accumulated knowledge into a single context window. Mnemosyne solves this with careful indexing, cross-referencing, and context-aware retrieval -- surfacing only the knowledge relevant to the current task.
+Mnemosyne is a persistent orchestration daemon built around three convictions:
 
-## Architecture
+### 1. Fresh context is first-class
 
-A two-tier knowledge system:
+Every reasoning task runs in a short, focused LLM session with exactly the context it needs — nothing more. Long accumulating sessions aren't a thing to manage; they're architected away. Context rot is a failure mode to eliminate, not tolerate.
 
-### Tier 1 -- Per-Project Knowledge
+The unit of work is one fresh session. Between sessions, state flows through durable files. The orchestrator's job is to make sure every session gets exactly the right starting context and no more.
 
-Each project has a `knowledge/` directory containing observations specific to that codebase -- patterns discovered, decisions made, techniques that worked. This is managed by a Claude Code plugin (based on Mastra's observational memory concepts).
+### 2. Plans and knowledge are actors
 
-### Tier 2 -- Global Knowledge
+Each plan you're working on — a feature, investigation, refactor, experiment — is a long-lived **actor** with its own state, mailbox, and phase cycle. Each domain of knowledge (Rust, distributed systems, FFI, architecture, research) is an **expert actor** you consult like a co-worker.
 
-Cross-project knowledge lives in `~/.mnemosyne/`, a Git-backed store organised along multiple axes:
+Actors communicate by message passing. Plans dispatch tasks to each other. Plans query experts. Experts bring different perspectives — the same question to three experts produces three genuinely different answers, because each is reasoning from its own persona and knowledge scope in its own fresh context.
 
-```
-~/.mnemosyne/
-├── config.yml
-├── .gitignore
-├── knowledge/
-│   ├── languages/         # Rust, Swift, Racket, Haskell, Prolog, etc.
-│   ├── domains/           # macOS/AppKit, web, databases, concurrency, etc.
-│   ├── tools/             # Cargo, Git, Docker, etc.
-│   ├── techniques/        # TDD, async patterns, error handling, etc.
-│   └── projects/          # Per-project summaries and cross-references
-├── archive/               # Pruned entries (preserved, not deleted)
-└── cache/                 # Derived data (gitignored)
-```
+### 3. The unit of orchestration is the actor
 
-Knowledge flows upward: project-level observations are promoted to global knowledge when they prove useful across projects. The CLI provides commands for querying, promoting, curating, and evolving knowledge entries.
+One daemon per machine hosts many actors, each backed by filesystem state that survives daemon restarts. Clients — a Rust TUI, an Obsidian plugin, a web UI — attach to actors over a local Unix socket to observe or drive them. Multiple humans and multiple AI harnesses can work simultaneously without conflicting. The daemon handles supervision, fault isolation, routing, and — eventually — distribution to other machines for team-mode work.
 
-### Knowledge Files
+## Architecture at a glance
 
-Each entry is Markdown with YAML frontmatter tracking provenance and confidence:
+```mermaid
+flowchart TB
+    subgraph Clients["Clients (attach over Unix socket / NDJSON)"]
+        TUI["Rust TUI<br/>(ratatui)"]
+        Obs["Obsidian plugin<br/>(v1.5+)"]
+        Web["Web UI<br/>(v2+)"]
+    end
 
-```yaml
----
-title: "Chez Scheme FFI requires explicit gc-protect for callbacks"
-tags: [chez-scheme, ffi, memory-management]
-created: 2026-02-15
-last_validated: 2026-03-20
-confidence: high
-origins:
-  - project: apianyware-macos
-    date: 2026-02-15
-    context: "FFI callback integration"
-supersedes: []
----
-```
+    subgraph Daemon["Mnemosyne daemon (Elixir / BEAM / OTP)"]
+        direction TB
+        Router["Message router<br/>+ declarative routing<br/>+ Level 2 LLM fallback"]
 
-### Evolution
+        subgraph PlanActors["Plan actors (one per plan)"]
+            P1["project-root<br/>plan"]
+            P2["sub-A<br/>plan"]
+            P3["sub-F<br/>plan"]
+        end
 
-Mnemosyne tracks how knowledge evolves -- entries can be superseded, contradicted, or validated over time. Stale knowledge is archived rather than deleted, preserving the history of understanding.
+        subgraph Experts["Expert actors (consultative)"]
+            E1["rust-expert"]
+            E2["research-expert"]
+            E3["ffi-expert"]
+        end
 
-## Components
+        Sup["Supervisor<br/>(OTP :transient)"]
+        HS["Harness adapters<br/>(Claude Code, +MoM v1.5)"]
+    end
 
-- **`mnemosyne` CLI** (Rust) -- query, promote, curate, explore, and manage the global knowledge store
-- **Claude Code plugin** -- provides 7 skills (`/begin-work`, `/reflect`, `/setup-knowledge`, `/create-plan`, `/curate-global`, `/promote-global`, `/explore-knowledge`) that integrate per-project observational memory with the global knowledge base
-- **`~/.mnemosyne/` Git repo** -- the global store itself, versioned for history and portability
-- **Evaluation framework** -- Rust harness for retrieval/contradiction/context metrics plus a Python LLM-as-judge harness for entry quality scoring
+    subgraph Files["Filesystem (durable substrate)"]
+        Vault["Mnemosyne-vault/<br/>plans • knowledge • experts<br/>routing.ex • daemon.toml"]
+        Projects["&lt;project&gt;/mnemosyne/<br/>project-root/<br/>knowledge/"]
+    end
 
-## Quick Start
-
-```bash
-# Build and install
-cargo install --path .
-
-# Initialise global knowledge store
-mnemosyne init
-
-# Install the Claude Code plugin
-mnemosyne install claude-code
-
-# Query global knowledge (auto-detects current project context)
-mnemosyne query --context
-
-# Promote a per-project learning to global
-mnemosyne promote --tags rust,async --origin my-project
+    TUI & Obs & Web <--> Router
+    Router <--> PlanActors
+    Router <--> Experts
+    PlanActors & Experts --> Sup
+    PlanActors & Experts --> HS
+    PlanActors & Experts <--> Files
+    HS -.spawns.-> LLM[("Fresh LLM sessions<br/>(one per reasoning task)")]
 ```
 
-To continue on a new machine with an existing knowledge base:
+## Two actor types
 
-```bash
-mnemosyne init --from git@github.com:you/mnemosyne-knowledge.git
+### PlanActor
+
+A plan represents an ongoing work effort: a feature, investigation, refactor, experimental direction. Each plan is an actor with:
+
+- A **backlog** of tasks and received dispatches from other plans
+- A **memory** of distilled architectural decisions and learnings
+- A **session log** of phase-cycle history
+- A **phase cycle** (work → reflect → compact → triage)
+- A **mailbox** for incoming dispatches and queries
+
+Plans **nest**. A project has a single root plan. That root may have sub-plans, which may have sub-sub-plans, at arbitrary depth. The hierarchy lives on the filesystem — a directory is a plan if and only if it contains `plan-state.md`. This lets Mnemosyne host dozens of fine-grained, tightly-scoped plans across many projects without any single plan's context exploding.
+
+```
+<project>/mnemosyne/
+├── knowledge/                            # Tier 1 per-project
+└── project-root/                         # always exactly one root plan
+    ├── plan-state.md                     # marker + phase state
+    ├── backlog.md
+    ├── memory.md
+    ├── session-log.md
+    └── sub-F-hierarchy/                  # nested child plan
+        ├── plan-state.md
+        └── ...
 ```
 
-## CLI Commands
+### ExpertActor
 
-| Command | Description |
-|---------|-------------|
-| `mnemosyne init [--from <repo>]` | Create `~/.mnemosyne/` with default structure, or clone an existing knowledge repo |
-| `mnemosyne query <terms> [--context] [--format markdown\|json\|plain] [--max-tokens N]` | Search global knowledge by terms or auto-detected project context |
-| `mnemosyne promote [--tags T] [--origin P]` | Interactively promote a learning to the global store with contradiction checking |
-| `mnemosyne curate` | Interactive reflective curation session -- review, validate, supersede, or prune entries |
-| `mnemosyne explore` | Interactive knowledge exploration -- gap analysis, tag clusters, open questions |
-| `mnemosyne install claude-code` | Install the Claude Code adapter plugin to `~/.claude/plugins/observational-memory` |
-| `mnemosyne status` | Knowledge base summary: entry counts by axis and confidence, origin projects |
+An expert represents a domain of knowledge. Each expert is an actor with:
 
-## Features
+- A **persona** (how they think and how they respond)
+- A **knowledge scope** (which files under `<vault>/knowledge/` they can read)
+- A **retrieval strategy** (how they find relevant entries for a question)
+- A **mailbox** for incoming queries
 
-| Feature | Description |
-|---------|-------------|
-| **Two-tier knowledge** | Per-project knowledge (Tier 1) and global knowledge (Tier 2) work independently; global is purely additive |
-| **Axis organisation** | Five top-level axes: `languages/`, `domains/`, `tools/`, `techniques/`, `projects/` |
-| **Tag-based retrieval** | Cross-cutting queries via frontmatter tags -- find everything tagged `async` regardless of axis |
-| **Context-inferred queries** | Detects project languages and dependencies, maps them to tags, retrieves relevant global knowledge |
-| **Contradiction detection** | Jaccard tag-overlap scoring flags potential contradictions before promotion; you resolve interactively |
-| **Evidence-based evolution** | No time-based expiry; knowledge is valid until contradicted by evidence |
-| **Supersession records** | Old content preserved inline in a `## Superseded` section with date ranges and reasons |
-| **Divergence detection** | Flags when multiple projects depart from global knowledge, suggesting the global record needs updating |
-| **Reflective curation** | Interactive `curate` command reviews active areas and surfaces divergence |
-| **Socratic exploration** | `explore` command performs gap analysis and surfaces tag clusters for synthesis |
-| **Git-backed store** | `~/.mnemosyne/` is a standard Git repo; sync between machines with push/pull |
-| **Claude Code plugin** | 7 skills for observational memory, planning, reflection, curation, promotion, and exploration |
-| **Graceful degradation** | The Claude Code plugin works without Mnemosyne installed -- global features are simply omitted |
-| **Language detection** | Built-in profiles for 12 languages: Rust, Python, Haskell, OCaml, Prolog, Mercury, Scheme, Racket, Common Lisp, Smalltalk, Idris, Swift |
-| **Dependency parsing** | Extracts dependencies from Cargo.toml and pyproject.toml to infer relevant knowledge tags |
-| **Multiple output formats** | Query results in Markdown, JSON, or plain text; token-budget-aware output limiting |
+When a plan has a question, it asks an expert. The expert spawns a fresh-context session with just the relevant knowledge entries, its persona, and the question. It answers, and the answer flows back to the originating session inline — the originating session **never loads the expert's knowledge into its own context**. Fresh context preserved at both ends.
 
-## Evaluation
+Expert declarations live at `<vault>/experts/<expert-id>.md` and are user-editable. Default experts ship with Mnemosyne (Rust, research, distributed systems, architecture, FFI, Obsidian); users add their own by dropping in new declaration files.
 
-Mnemosyne includes a quantitative evaluation framework (`eval/`) for measuring retrieval quality, contradiction detection accuracy, context detection coverage, and entry quality.
+## Two message types
 
-### Rust Harness (`eval/`)
+### Dispatch — "here's a task you should do"
 
-A standalone binary that loads a benchmark corpus of synthetic knowledge entries, graded-relevance queries, annotated contradiction pairs, and mock projects, then reports:
+Fire-and-forget delivery from one actor to another's backlog. Used for cross-cutting concerns ("this decision affects sub-A"), cross-project work ("investigate this in APIAnyware-MacOS"), and routing tasks to the right specialist plan.
 
-- **Retrieval metrics** -- MRR, Precision@k, Recall@k, nDCG@k
-- **Contradiction detection** -- Precision, Recall, F1 with configurable threshold sweep
-- **Context detection** -- Language, dependency, and tag mapping accuracy
+### Query — "here's a question, please answer"
 
-```bash
-cd eval && cargo run -- --verbose --sweep    # human-readable with threshold sweep
-cd eval && cargo run -- --json               # machine-readable JSON
+Request-response, handled in the target actor's fresh context, returned to the originating session via the harness tool-call boundary. Used for consulting experts, asking a sibling plan for status, verifying a design decision against another plan's memory.
+
+Both types support three **target variants**: same-project plan (named directly), cross-project project (routed by a fresh-context Level 2 agent that reads target project code to pick the right specific plan), or expert (consultative).
+
+## Hierarchical reasoning with fresh context
+
+The deepest insight in Mnemosyne's architecture: **reasoning depth should scale with decision specificity, not accumulate**.
+
+```mermaid
+flowchart LR
+    L1["Level 1<br/>Originating plan phase<br/>broad context, own plan only"]
+    L2["Level 2<br/>Project routing agent<br/>fresh context<br/>one project's code + plans"]
+    L3["Level 3<br/>Plan verification agent<br/>fresh context<br/>one plan's memory + backlog"]
+
+    L1 -- "cross-project dispatch<br/>(I think it belongs in APIAnyware)" --> L2
+    L2 -- "verify against<br/>specific plan" --> L3
+    L3 -- "yes / no + reason" --> L2
+    L2 -- "routing decision<br/>or rejection with retarget" --> L1
 ```
 
-### Python Quality Harness (`eval/quality/`)
+Each level has **fresh context** and takes on a **more specific question** than the level above. Level 1 reasons about its own plan with a tiny bit of vault awareness. Level 2 reasons about one target project — including its source code — without polluting Level 1's context. Level 3, if spawned, reasons about one specific plan's internals. At every level, the context budget is refocused rather than accumulated.
 
-An LLM-as-judge harness that scores entries against a four-dimension rubric (specificity, actionability, provenance, confidence fit) using the Anthropic SDK, with two-pass variance reduction:
+**This is the opposite of the "pile more context onto one session" anti-pattern that defeats fresh-context discipline.** Each agent is dedicated to exactly the question it has enough context to answer, nothing more.
 
-```bash
-cd eval/quality
-PYTHONPATH=../.. python -m eval.quality.src.__main__ --single-pass --verbose
+## Declarative, user-visible routing
+
+Routing decisions are **user-visible and user-editable**. When a plan dispatches a task, Mnemosyne consults a routing module at `<vault>/routing.ex` — an Elixir module with pattern-matched `route/2` clauses:
+
+```elixir
+defmodule Mnemosyne.UserRouting do
+  def route(:query, facts) do
+    cond do
+      "rust" in facts           -> {:target_expert, "rust-expert"}
+      "ffi" in facts            -> {:target_expert, "ffi-expert"}
+      "callback_registration" in facts and "gc_protect" in facts ->
+        {:target_plan, "APIAnyware-MacOS/project-root/sub-ffi-callbacks"}
+      true                      -> :no_route
+    end
+  end
+end
 ```
 
-Includes automated structural completeness checks that require no API key.
+Concerns are extracted from message bodies by a small, cheap LLM pass (ideal for local models when [mixture-of-models](#whats-shipping-and-when) lands). Rules fire deterministically. BEAM's native hot code reload makes rule edits take effect without a daemon restart.
 
-See [Evaluation Strategy](docs/evaluation-strategy.md) for the full methodology and research context.
+When rules don't decide, a **Level 2 routing agent** takes over — a fresh-context LLM session scoped to the target project's code and plans, with authority to pick a specific target or reject with reasoning. Level 2 can propose new rules for the user to accept into `routing.ex`, closing a learning loop: novel cases train the deterministic path.
+
+## Vault and filesystem layout
+
+```
+<dev-root>/
+├── Mnemosyne-vault/                      # dedicated Obsidian-native vault, git-backed
+│   ├── mnemosyne.toml                    # vault identity marker
+│   ├── daemon.toml                       # daemon config
+│   ├── routing.ex                        # user-editable routing rules
+│   ├── plan-catalog.md                   # auto-generated vault catalog
+│   ├── knowledge/                        # Tier 2 global knowledge
+│   ├── experts/                          # expert declarations
+│   ├── projects/                         # symlinks into project repos
+│   │   ├── Mnemosyne -> .../Mnemosyne/mnemosyne/
+│   │   └── APIAnyware-MacOS -> .../APIAnyware-MacOS/mnemosyne/
+│   └── runtime/                          # ephemeral state
+│       ├── daemon.sock
+│       ├── mailboxes/
+│       ├── staging/
+│       └── ...
+└── <project>/
+    ├── .git/
+    └── mnemosyne/
+        ├── knowledge/                    # Tier 1 per-project
+        └── project-root/                 # root plan (always)
+```
+
+- **Mnemosyne-vault** is a dedicated Obsidian-native vault with its own git history. Hosts cross-project knowledge, expert declarations, routing rules, and runtime state. Accesses per-project content via symlinks so plans live in project repos under sovereign git ownership, but are visible in one place for Obsidian and Dataview.
+- **Per-project `mnemosyne/`** contains that project's Tier 1 knowledge and its plan tree. Symlinked from the vault so Obsidian sees it.
+- **Filesystem is the durable substrate.** Everything non-transient lives as files. The daemon is an orchestrator over filesystem state, not a state owner. Daemon restart rebuilds everything from files; no data can be lost by a crash.
+
+## Obsidian-native
+
+Every file format decision targets Obsidian-first browsing:
+
+- Markdown with YAML frontmatter everywhere
+- Dataview-friendly kebab-case field names
+- Wikilinks for cross-references between plans, knowledge entries, and session logs
+- Tags as first-class metadata
+- A `.obsidian/` template that ships with Mnemosyne (Dataview required, Templater optional)
+- Auto-generated `plan-catalog.md` as a "what's in my vault" dashboard
+
+Humans browse, review, edit, and audit everything Mnemosyne writes through a full-featured explorer that Mnemosyne doesn't have to build. This is the accountability substrate that makes post-session auto-ingestion safe: every knowledge entry Mnemosyne creates can be reviewed, edited, or rejected by a human using tools they already know.
+
+## Mixture of experts + mixture of models
+
+Expert actors have narrow scope. A Rust expert answering "does this lifetime annotation compile?" doesn't need the most capable model. A research expert synthesizing across a corpus of papers does. The economic profile becomes:
+
+- **Expensive models** → plan actors for heavy orchestration, cross-project routing, brainstorming
+- **Cheap API models or local models** → experts for narrow consultation
+- **Local models** → bulk routine queries where latency and privacy matter
+
+For power users with capable local models, most queries stay on-device. API spend concentrates where capability genuinely matters. This is a first-class capability, not a workaround.
+
+(Mixture of models is **v1.5+** — the actor declaration format reserves the `model:` field and the daemon config reserves the `[harnesses]` section, but v1 ships a single adapter.)
+
+## Team mode
+
+Multiple Mnemosyne daemons on different machines communicate via BEAM's native distribution or a custom TCP transport. Actors address each other with qualified IDs prefixed by peer name. Cross-daemon dispatch is a **transport change, not an architectural change** — the message routing, actor model, and semantics are unchanged. Team mode is where "co-workers asking each other questions" becomes literal: different team members' plan actors and expert actors all reachable from a single catalog.
+
+(Team mode is **v2+** — the daemon config reserves the `[peers]` section and qualified IDs reserve the `<peer>@<id>` syntax, but v1 is strictly single-vault-per-machine.)
+
+## What's shipping and when
+
+### V1 — foundation
+
+- Persistent Elixir daemon with OTP supervision
+- PlanActor (wraps sub-B's four-phase cycle)
+- ExpertActor stub (real implementation from sub-N)
+- Dispatch + Query message types, full audit trail
+- Plan hierarchy with `project-root` convention and path-based qualified IDs
+- Declarative routing (pattern-matched Elixir + hot reload) with Level 2 LLM fallback
+- User-editable `routing.ex` with rule suggestion learning loop
+- Vault discovery, identity marker, adopt-project command
+- Claude Code harness adapter (sub-C)
+- Post-session knowledge ingestion pipeline (sub-E)
+- Rust TUI client (ratatui) over Unix socket NDJSON protocol
+- Obsidian-native vault format with plan catalog
+- Observability via `:telemetry` + typed Elixir struct events (sub-M)
+
+### V1.5 — richer experts, more models
+
+- **Sub-N (domain experts)**: full ExpertActor implementation with personas, retrieval strategies, curation integration, default expert set
+- **Sub-O (mixture of models)**: multi-adapter harness layer, per-actor model selection, local-model adapters, cost telemetry
+- **Sub-K (Obsidian plugin)**: alternative daemon client with first-class Obsidian integration
+
+### V2+ — collaboration and scale
+
+- **Sub-P (team mode)**: multi-daemon transport, peer discovery, cross-daemon auth, shared-vault conflict resolution, distributed experts
+- **Joint brainstorm sessions**: multi-actor shared-context reasoning for architectural discussions
+- **Gleam migration** (if needed): static typing for invariant preservation, new sub-projects written alongside Elixir core
+
+## Runtime
+
+| Component | Language | Framework |
+|---|---|---|
+| **Daemon** | Elixir | OTP / GenServer / Supervisor / `:telemetry` |
+| **TUI client** | Rust | `ratatui` + `tokio` + `serde_json` |
+| **Knowledge format** | — | Markdown + YAML frontmatter (Obsidian-native) |
+| **Vault** | — | Git-backed Obsidian vault |
+| **Rule engine** | Elixir | pattern-matched `defp` + hot code reload |
+| **Harness adapter** | Elixir | `erlexec` for PTY (sub-C, pending BEAM spike) |
+| **Integration boundary** | — | Unix socket + NDJSON (protocol frozen early) |
+
+### Why Elixir on BEAM?
+
+The architecture is literally OTP. Actor model, supervision, message passing, hot code reload, distribution transparency — every single one is a BEAM primitive we would otherwise hand-roll. When a design process independently arrives at OTP's design decisions, that's the universe telling you which runtime to use.
+
+Gleam (statically typed BEAM language) is reserved as a migration target if Elixir's dynamic typing proves painful for Mnemosyne's invariant-heavy design discipline. The two interop cleanly on BEAM — new sub-projects could be written in Gleam without disrupting the Elixir daemon core.
+
+### Why Rust for the TUI?
+
+The TUI needs first-class terminal rendering, which Rust's `ratatui` provides in a way no BEAM library currently matches. Running it as a separate binary over a local socket (rather than embedding via Rustler) gives independent deployment, no ABI coupling, and natural multi-client support — the same protocol accepts the Rust TUI, a future Obsidian plugin, a web UI, or a headless scripting client.
 
 ## Philosophy
 
-Knowledge in Mnemosyne is treated as living beliefs, not permanent records.
+### Fresh context is a first-class architectural goal
 
-**No time-based expiry.** A two-year-old insight about how garbage collection interacts with thread scheduling may be as valid today as when it was written -- possibly more so, as accumulated evidence has validated it across many contexts. Time alone tells you nothing about whether knowledge is still correct. Evidence does. Knowledge expires when it is contradicted by observation, not when a clock ticks.
+Context rot, drift, and noise are primary failure modes for long LLM sessions. Mnemosyne designs for many short fresh sessions with explicit state handoff through files, rather than monolithic accumulating sessions. Every phase boundary, every harness spawn, every expert consultation, every routing agent invocation is a deliberate fresh-context opportunity.
 
-**Evidence-based evolution.** Every entry carries provenance: which projects it was observed in, when, under what context. When a contradiction arises, the system surfaces it and guides you through a resolution -- supersede, coexist, discard, or refine. The history is preserved, not discarded.
+### Integration over reinvention
 
-**Confidence as epistemic honesty.** Entries carry one of four confidence levels: `high` (validated across multiple contexts), `medium` (validated in one project, likely transferable), `low` (observed once, tentative), and `prospective` (awareness of a possibility, not yet validated by hands-on experience). Prospective entries are clearly distinguished from experience-validated knowledge.
+Scope overlap with mature tools is a reason to adopt, not to reinvent. This applies to Obsidian (explorer UI), OTP (actor model), `ratatui` (terminal rendering), `erlexec` (PTY management), `ascent`/Erlog (declarative rules), `:telemetry` (observability). Every sub-project brainstorm surfaces "what existing tool covers this ground, and why not use it?" — and answers that question in its design doc.
 
-**Curation as deliberate practice.** The `curate` command is not automated maintenance -- it is a reflective session. You review your own knowledge, confirm what still holds, update what has shifted, and prune what no longer applies. This mirrors how expert practitioners consolidate expertise.
+### Files as the durable substrate
 
-## Documentation
+Everything non-transient is a file. The daemon is an orchestrator, not a state store. Daemon restart rebuilds from files. Individual actor crashes don't destroy state. Team mode becomes "multiple daemons over the same filesystem, syncing through git." Files-as-substrate is the discipline that makes every other architectural choice compose.
 
-- [User Guide](docs/user-guide.md) -- installation, daily workflow, full walkthrough
-- [CLI Reference](docs/reference.md) -- every command, flag, and expected output
-- [Knowledge Format](docs/knowledge-format.md) -- file format spec, frontmatter fields, body conventions
-- [Evolution Guide](docs/evolution-guide.md) -- philosophy and mechanics of knowledge evolution
-- [Configuration](docs/configuration.md) -- `config.yml` reference, language profiles, context mappings
-- [Plugin Development](docs/plugin-development.md) -- how to build adapters for other editors/tools
-- [Research Sources](docs/research-sources.md) -- annotated bibliography of the cognitive science underpinning the design
-- [Evaluation Strategy](docs/evaluation-strategy.md) -- metrics, techniques, and framework for evaluating whether the system works
+### Hard errors by default
+
+Unexpected conditions, invariant violations, I/O failures, and ambiguous states fail hard with clear diagnostics. Soft fallbacks require explicit written rationale. This is load-bearing for correctness in a system with many moving parts — silent degradation is how accumulated drift destroys reliability.
+
+### Obsidian-native explorer
+
+The human is the final accountability substrate for auto-ingestion, dispatch correctness, routing decisions, and knowledge curation. Mnemosyne cannot validate its own LLM outputs — but a human browsing a well-organized vault with Dataview queries, wikilinks, and file history can review, edit, reject, and audit everything. This is what makes Mnemosyne trustworthy despite running autonomous LLM sessions continuously.
+
+### Human and LLM are co-equal actors
+
+Every workflow must work with a human driver or an LLM driver. Phase cycles support human-mode and LLM-mode execution. Triage, reflection, and curation can all be done by humans when preferred. The TUI is designed for human use as well as LLM observation. The architecture does not privilege LLMs over humans — they are interchangeable drivers of the same underlying state.
 
 ## Status
 
-Version 0.1.0 -- initial implementation. The CLI, knowledge format, and Claude Code plugin are functional. The evaluation framework (intrinsic retrieval/contradiction/context metrics and LLM-as-judge quality scoring) is implemented.
+**Currently in architectural design phase.** Nine sub-project brainstorms are substantially complete. Implementation has not started on the daemon; a previous v0.1.0 existed as a Rust CLI but has been subsumed by this pivot to the actor-daemon architecture.
 
-**Not yet implemented:**
-- Horizon-scanning mode in the `explore` command (web search integration for discovering new developments). Spec and implementation plan are written.
-- Multi-session simulation evaluation (Phase 3) -- validating knowledge accumulation across simulated project sessions.
-- Controlled impact experiments (Phase 4) -- A/B experimental harness measuring whether Mnemosyne improves AI assistant outcomes.
+Sub-project design docs are in [`docs/superpowers/specs/`](docs/superpowers/specs/):
 
-## Related Projects
+| Sub-project | Status | Design doc |
+|---|---|---|
+| A (global store) | design complete | `2026-04-13-sub-A-global-store-design.md` |
+| B (phase cycle) | design complete (pending F amendment) | `2026-04-12-sub-B-phase-cycle-design.md` |
+| C (harness adapters) | design complete (pending F amendment + BEAM spike) | `2026-04-13-sub-C-adapters-design.md` |
+| E (knowledge ingestion) | design complete (pending F amendment) | `2026-04-12-sub-E-ingestion-design.md` |
+| F (hierarchy, actor model, routing) | design complete | `2026-04-14-sub-F-hierarchy-design.md` |
+| M (observability) | design complete (pending F amendment) | `2026-04-13-sub-M-observability-design.md` |
+| D (concurrency) | design pending (scope collapsed by F) | — |
+| G (migration) | design pending | — |
+| H (skill fold) | design pending | — |
+| I (Obsidian coverage) | design pending | — |
+| L (terminal spike) | design pending | — |
+| N (domain experts) | **new** — added by F's brainstorm | — |
+| O (mixture of models) | **new** — reserved for v1.5+ | — |
+| P (team mode) | **new** — reserved for v2+ | — |
 
-Mnemosyne accumulates knowledge from working on all Linkuistics projects and makes it available across them:
+The comprehensive architectural overview is in [`docs/architecture.md`](docs/architecture.md). Research sources grounding the design are in [`docs/research-sources.md`](docs/research-sources.md).
 
-- **[APIAnyware-MacOS](https://github.com/Linkuistics/APIAnyware-MacOS)** -- knowledge about FFI patterns, platform APIs, code generation
-- **[TestAnyware](https://github.com/Linkuistics/TestAnyware)** -- knowledge about VM management, GUI testing strategies
-- **[*Pro IDEs](https://github.com/Linkuistics)** -- knowledge about language-specific idioms and tooling
+## Related projects
+
+Mnemosyne accumulates knowledge from and supports AI-assisted work on all Linkuistics projects:
+
+- **[APIAnyware-MacOS](https://github.com/Linkuistics/APIAnyware-MacOS)** — macOS API surface code generator; FFI-heavy
+- **[GUIVisionVMDriver](https://github.com/Linkuistics)** — VM orchestration CLI for GUI testing
+- **[Modaliser-Racket](https://github.com/Linkuistics)** — Racket-based modal logic toolkit
+- **[RacketPro](https://github.com/Linkuistics)** — Racket IDE enhancements
+- **[TestAnyware](https://github.com/Linkuistics/TestAnyware)** — VM management and GUI testing strategies
+- **[*Pro IDEs](https://github.com/Linkuistics)** — language-specific IDE enhancements
 
 ## License
 
-[Apache-2.0](LICENSE) -- Copyright 2026 Linkuistics
+[Apache-2.0](LICENSE) — Copyright 2026 Linkuistics
