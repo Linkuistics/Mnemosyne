@@ -2,15 +2,12 @@
 
 Read these plan-specific references before working a task:
 
-1. `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style.md` and
-   `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-rust.md` for
-   coding conventions.
-2. `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
-   — the authoritative design document for this sub-project. Every task
-   in the backlog derives from this spec. Consult it before starting
-   any task; do not re-litigate design decisions here. If you discover
-   a spec-level issue, surface it to the parent plan
-   (`{{PROJECT}}/LLM_STATE/mnemosyne-orchestrator/memory.md`).
+- `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
+  — the authoritative design document for this sub-project. Every task
+  in the backlog derives from this spec. Consult it before starting
+  any task; do not re-litigate design decisions here. If you discover
+  a spec-level issue, surface it to the parent plan
+  (`{{PROJECT}}/LLM_STATE/mnemosyne-orchestrator/memory.md`).
 
 ## About this plan
 
@@ -34,7 +31,7 @@ For Rust work in this project, use:
 
 - `cargo test` — full test suite
 - `cargo clippy` — lint; no new warnings allowed
-- `cargo +nightly fmt` — formatting per `coding-style-rust.md`
+- `cargo +nightly fmt` — formatting
 
 Run all three before declaring a task done.
 

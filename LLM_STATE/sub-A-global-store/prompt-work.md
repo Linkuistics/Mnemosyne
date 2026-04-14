@@ -2,9 +2,6 @@
 
 ## Additional reads
 
-- `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style.md` and
-  `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-rust.md` for
-  coding conventions.
 - `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-A-global-store-design.md`
   — the authoritative design document for this sub-project. Every
   task below derives from this spec. Consult it before starting any
@@ -53,11 +50,9 @@ discover a spec-level issue during implementation.
 ## Commands
 
 For Rust work, use `cargo test`, `cargo clippy`, and `cargo +nightly
-fmt` per
-`{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-rust.md`. See
-`{{PROJECT}}/README.md` for the full build and test command surface.
-Run the full test suite and clippy before declaring any task done —
-no task ships with failing tests or new warnings.
+fmt`. See `{{PROJECT}}/README.md` for the full build and test command
+surface. Run the full test suite and clippy before declaring any task
+done — no task ships with failing tests or new warnings.
 
 ## Dependencies on sibling sub-projects
 

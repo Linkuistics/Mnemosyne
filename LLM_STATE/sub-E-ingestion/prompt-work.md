@@ -2,8 +2,6 @@
 
 Read:
 
-- `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style.md`
-- `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-rust.md`
 - `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md`
   — the authoritative design document for this sub-project. Every task in
   the backlog derives from this spec. Consult it before starting any task.
@@ -35,9 +33,8 @@ a spec-level issue during implementation.
 
 ## Commands
 
-For Rust work use `cargo test`, `cargo clippy`, and `cargo +nightly fmt`
-per `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-rust.md`. See
-`{{PROJECT}}/README.md` for anything not covered.
+For Rust work use `cargo test`, `cargo clippy`, and `cargo +nightly fmt`.
+See `{{PROJECT}}/README.md` for anything not covered.
 
 ## Dependencies on sibling sub-projects
 

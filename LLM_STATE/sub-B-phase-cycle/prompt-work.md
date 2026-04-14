@@ -2,20 +2,20 @@
 
 Read for this plan:
 
-1. `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style.md` and
-   `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-rust.md` for coding
-   conventions.
-2. `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`
-   — the authoritative design document for this sub-project. Every task
-   in the backlog derives from this spec. Consult it before starting any
-   task.
+- `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`
+  — the authoritative design document for this sub-project. Every task
+  in the backlog derives from this spec. Consult it before starting any
+  task.
 
 ## About this plan
 
 This plan implements sub-project B of the Mnemosyne orchestrator merge —
 the long-running process model, phase cycle state machine, executor
 abstractions, placeholder substitution mechanism, and plan-state file
-format that replace the old `run-backlog-plan.sh`.
+format that replace the LLM_CONTEXT `run-plan.sh` driver. The cycle is
+**four phases** (work → reflect → compact → triage) mirroring LLM_CONTEXT's
+current upstream shape; compact is conditional on a wc-word-count trigger
+against a `compact-baseline` integer file, per `run-plan.sh`'s semantics.
 
 The design is fully specified in the design doc referenced above; this
 plan is the implementation work, not a design phase. Do not re-litigate
@@ -33,7 +33,7 @@ a spec-level issue during implementation.
 - **Non-disruption**: existing Mnemosyne v0.1.0 must keep running during
   the build. New code lives alongside, not in place of, existing code.
   The dogfood acceptance test is the final task in this plan's backlog
-  and is the moment v1 replaces `run-backlog-plan.sh` for the orchestrator
+  and is the moment v1 replaces `run-plan.sh` for the orchestrator
   seed plan.
 - **Type-level co-equal-actors**: every phase execution, LLM or human, must
   flow through the same `PhaseRunner::run_phase` chokepoint. Tests that
@@ -52,11 +52,10 @@ a spec-level issue during implementation.
 
 ## Commands
 
-Rust work uses `cargo test`, `cargo clippy`, and `cargo +nightly fmt` per
-`{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/coding-style-rust.md`. Run the full
-test suite and clippy before declaring any task done — no task ships with
-failing tests or new warnings. See `{{PROJECT}}/README.md` for Mnemosyne's
-full build/test surface.
+Rust work uses `cargo test`, `cargo clippy`, and `cargo +nightly fmt`.
+Run the full test suite and clippy before declaring any task done —
+no task ships with failing tests or new warnings. See
+`{{PROJECT}}/README.md` for Mnemosyne's full build/test surface.
 
 ## Dependencies on sibling sub-projects
 

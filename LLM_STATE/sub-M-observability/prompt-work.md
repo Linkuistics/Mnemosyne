@@ -1,11 +1,7 @@
 # Work Phase — Sub-project M: Observability Framework
 
-Read `/Users/antony/Development/LLM_CONTEXT/fixed-memory/coding-style.md`
-and `/Users/antony/Development/LLM_CONTEXT/fixed-memory/coding-style-rust.md`
-for coding conventions.
-
 Read
-`/Users/antony/Development/Mnemosyne/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
+`{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
 — the authoritative design document for this sub-project. Every backlog
 task derives from this spec. Consult it before starting any task.
 
@@ -20,7 +16,7 @@ substrate.
 The design is fully specified in the design doc above; this plan is the
 implementation work, not a design phase. Do not re-litigate design
 decisions here; surface them to the parent plan
-(`/Users/antony/Development/Mnemosyne/LLM_STATE/mnemosyne-orchestrator/memory.md`)
+(`{{PROJECT}}/LLM_STATE/mnemosyne-orchestrator/memory.md`)
 if you discover a spec-level issue during implementation.
 
 ### Sub-project M is cross-cutting
@@ -65,9 +61,8 @@ phase on each cycle).
 ## Commands
 
 Build / test / lint commands live in
-`/Users/antony/Development/Mnemosyne/README.md`. For Rust work, use
-`cargo test`, `cargo clippy`, and `cargo +nightly fmt` per
-`/Users/antony/Development/LLM_CONTEXT/fixed-memory/coding-style-rust.md`.
+`{{PROJECT}}/README.md`. For Rust work, use
+`cargo test`, `cargo clippy`, and `cargo +nightly fmt`.
 
 ## Dependencies on sibling sub-projects
 
