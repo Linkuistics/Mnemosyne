@@ -8,7 +8,7 @@ Plan-specific reflect guidance beyond the shared phase file:
   commitments. If a session surfaces a contradiction with any of these,
   do NOT silently absorb it into memory — flag it and escalate to the
   parent plan
-  (`/Users/antony/Development/Mnemosyne/LLM_STATE/mnemosyne-orchestrator/memory.md`)
+  (`{{PROJECT}}/LLM_STATE/mnemosyne-orchestrator/memory.md`)
   so the spec can be updated deliberately. The design is stable;
   contradictions require deliberate resolution, not quiet drift.
 

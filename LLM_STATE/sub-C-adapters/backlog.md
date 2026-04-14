@@ -12,6 +12,24 @@ implementation strategy in `{{PLAN}}/memory.md`: setup → day-1 verification
 instrumentation → tests → dogfood acceptance gate → conditional warm-pool.
 The work phase picks the best next task with input from the user.
 
+## ⛔ Backlog frozen — BEAM PTY spike required
+
+All tasks below are written against Rust (Cargo.toml, `src/harness/`,
+crossbeam-channel, nix, `std::process::Command`). The orchestrator's
+Session 9 committed Mnemosyne to a persistent BEAM daemon (Elixir/OTP).
+Sub-C's amendment — Elixir implementation via `erlexec`, OTP GenServer
+supervision replacing actor threading, `HarnessSpawner` as Elixir
+behaviour — is **blocked on the BEAM PTY spike (Priority 0)**. That spike
+validates whether `erlexec` can cleanly spawn Claude Code with PTY I/O,
+stream-json, sentinel detection, and process-group termination.
+
+**Do not start any task below until the BEAM PTY spike resolves.** Once it
+does, this backlog must be rewritten for Elixir/OTP (the task sequence and
+design intent remain valid; only the implementation technology changes).
+
+See `memory.md` § "BEAM / Elixir pivot (Session 9 amendment)" for full
+context.
+
 ## Task Backlog
 
 ### Task 1 — Cargo.toml deps + module skeleton `[setup]`

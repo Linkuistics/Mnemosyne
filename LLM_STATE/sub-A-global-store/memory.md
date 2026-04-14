@@ -82,6 +82,33 @@ project coding-style guides — the test suite drives implementation.
   own their own sibling adoption stubs" discipline, the stubs are
   authored now rather than deferred to M's adoption wave.
 
+## BEAM pivot amendment (unblocked)
+
+The orchestrator's Session 9 committed Mnemosyne to a persistent BEAM
+daemon (Elixir/OTP). Sub-A's backlog was brainstormed assuming a Rust
+CLI. The following changes apply to every task in the backlog:
+
+- **`verify_vault` caller changes:** called by the Elixir daemon at
+  startup (not per-invocation Rust CLI). The config discovery precedence
+  chain is unchanged.
+- **`init`/`adopt` become daemon subcommands:** they are no longer
+  standalone Rust CLI commands.
+- **v0.1.0 path deletion tasks are moot:** Tasks 11 and 12 targeted
+  Rust code in `src/main.rs` and `src/config.rs`. The entire Rust CLI
+  is retired, so those tasks become "verify the Elixir daemon does not
+  carry over the old hardcoded paths" rather than Rust refactoring work.
+- **Implementation language:** all new code is Elixir/OTP, not Rust.
+  References to `cargo test`, `cargo clippy`, `include_str!`, `serde`,
+  `chrono`, `scopeguard`, `clap`, and Rust-specific idioms throughout
+  the backlog task descriptions should be read as intent specifications
+  (the *what*), not literal implementation instructions (the *how*).
+  The executing session translates to Elixir equivalents.
+- **Template embedding:** `include_str!` becomes Elixir's `priv/`
+  directory or `Application.app_dir/2` equivalent.
+
+This amendment is currently unblocked. Five amendment tasks (A, B, D, E,
+M) can run in parallel per the orchestrator.
+
 ## Open questions
 
 ### What does the embedded `.obsidian/` template actually contain?

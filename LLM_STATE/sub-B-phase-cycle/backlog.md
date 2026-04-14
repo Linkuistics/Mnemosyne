@@ -1,4 +1,4 @@
-# Backlog — Sub-project B: Phase Cycle Reimplementation in Rust
+# Backlog — Sub-project B: Phase Cycle Reimplementation
 
 Implementation backlog for sub-project B. All tasks derive from the design
 doc at
@@ -142,9 +142,153 @@ best next task with input from the user.
   `LlmHarnessExecutor`.
 - **Results:** _pending_
 
+### Absorb LLM_CONTEXT 2026-04 overhaul into B's design + types `[amendment]`
+- **Status:** not_started
+- **Dependencies:** Task 0
+- **Description:** LLM_CONTEXT's upstream shape shifted after B's
+  brainstorm: it now ships a four-phase cycle (work → reflect →
+  compact → triage, compact conditional on a wc-word-count trigger),
+  phase-file-factored composition (shared `phases/<phase>.md` +
+  optional per-plan `prompt-<phase>.md` override), a
+  `fixed-memory/memory-style.md` file read by both reflect and
+  compact, an opt-in `pre-work.sh` executable hook invoked before
+  every work phase, a `{{RELATED_PLANS}}` synthesised placeholder,
+  a `related-plans.md` schema using Parents/Children only (siblings
+  auto-discovered), and ISO 8601 UTC timestamps for session-log
+  entries. All seven changes post-date B's 2026-04-12 brainstorm and
+  must be absorbed into the design doc and backlog *before* the
+  "Define core abstractions and types" task is started so that types,
+  `PhaseRunner` logic, and the prompts-vendor module land in their
+  amended shape from the outset.
+
+  **Work to perform.**
+
+  (a) Update `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`
+  to reflect the four-phase cycle. §2.2 and §3 (the state machine and
+  phase transitions) must include `compact` as a phase, document the
+  conditional trigger (`wc -w memory.md <= compact-baseline + HEADROOM`
+  with HEADROOM a runtime constant initially 1500 words), and specify
+  that reflect ALWAYS writes `compact` as its nominal next phase —
+  the runner-level logic decides whether to invoke compact or skip
+  to triage. Compact is "strictly lossless rewrite of memory.md";
+  reflect is the only lossy-pruning phase.
+
+  (b) Amend the `plan-state.md` YAML frontmatter phase enum in §2.2.2
+  to include `compact`, making the full set `work | reflect | compact
+  | triage`. Add a `compact_baseline: u64` field (or equivalent) to
+  plan state, matching `run-plan.sh`'s per-plan `compact-baseline`
+  file semantics.
+
+  (c) Specify the phase composition mechanism in §2.2.3 and §3: a
+  phase prompt is produced by taking the embedded shared phase file
+  (from `prompts::PHASE_<PHASE>`), appending the plan's optional
+  `prompt-<phase>.md` override if present, then substituting
+  placeholders. `StagingDirectory::render` materialises the result
+  into the staging directory. Forbid any plan from *replacing* the
+  shared phase content; overrides are additive only.
+
+  (d) Add an "optional `pre-work.sh` hook" section to the spec. The
+  contract: executable at `<plan>/pre-work.sh`, absent or
+  non-executable files are silently skipped, runs from the project
+  root, only before work phase (never reflect/compact/triage), runs
+  after the defensive `rm -f latest-session.md` cleanup, non-zero
+  exit aborts the whole cycle. Specify the `PhaseRunner` integration
+  point where this hook is invoked.
+
+  (e) Add `{{RELATED_PLANS}}` to the substitution placeholder list in
+  the spec. Value is a synthesised block built by walking the project
+  (for siblings) and the Parents/Children declared in
+  `related-plans.md` (for peer projects). `run-plan.sh`'s synthesis
+  algorithm is the reference: walk `$PROJECT/LLM_STATE/` for sibling
+  plans (dirs containing `plan-state.md`), then for each Parent /
+  Child entry walk that peer project's `LLM_STATE/` for its plans.
+  `{{RELATED_PLANS}}` is a forward-only placeholder — it is not
+  reverse-substituted on copy-back.
+
+  (f) Amend the `related-plans.md` spec section: Parents + Children
+  only; no Siblings section. Siblings are auto-discovered by walking
+  the project's plan tree.
+
+  (g) Specify ISO 8601 UTC-with-seconds timestamps for session-log
+  entries (`date -u '+%Y-%m-%dT%H:%M:%SZ'`) in the session-log format
+  section. Latest-session.md is written by the work phase (not
+  pre-created) and deleted by the runner before each work phase
+  starts; the runner appends it to session-log.md post-hoc after the
+  work phase exits successfully. No LLM phase ever reads
+  session-log.md.
+
+  (h) Update the embedded prompts task (below) with the new vendor
+  list: `phases/{work,reflect,compact,triage}.md`,
+  `fixed-memory/{coding-style,coding-style-rust,memory-style}.md`,
+  `create-plan.md`. Remove any reference to `backlog-plan.md` or
+  `create-a-multi-session-plan.md` — those are deleted/renamed
+  upstream.
+
+  (i) Update every other task in this backlog that references a
+  three-phase cycle, `run-backlog-plan.sh`, `BACKLOG_PLAN_SPEC`, or
+  the old vendor list, so descriptions are internally consistent with
+  the amendments.
+
+  **No runtime code** — this task is spec + backlog editing only. It
+  exists as a gate so the downstream implementation tasks are written
+  against the correct contract. Acceptance: the spec and backlog are
+  internally consistent with LLM_CONTEXT's current upstream shape,
+  verified by a manual re-read of §2.2, §3, and every task
+  description that touches phases, prompts, placeholders,
+  related-plans, or the runner state machine. Session-log entries in
+  the orchestrator plan already use the new ISO 8601 format, which is
+  a ground truth to verify against.
+- **Results:** _pending_
+
+### Absorb BEAM pivot into B's design, spec, and backlog `[amendment]`
+- **Status:** not_started
+- **Dependencies:** Task 0
+- **Description:** The orchestrator's Session 9 committed Mnemosyne to a
+  persistent BEAM daemon (Elixir/OTP), replacing the original Rust
+  single-process architecture. This is a load-bearing amendment that
+  touches every task in this backlog. Concrete work:
+
+  (a) Rewrite `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`
+  to replace Rust-specific constructs with Elixir/OTP equivalents:
+  traits → behaviours, structs → typed structs/maps, `Arc<dyn ...>` →
+  GenServer references, `tokio` tasks → OTP processes, `include_str!` →
+  embedded resources or `priv/` files, `serde_yaml` → a YAML library
+  (e.g. `yaml_elixir`), `ratatui` → daemon client TUI, `fs2` file locks
+  → `:flock` or equivalent.
+
+  (b) Rewrite PhaseRunner as a `PlanActor` GenServer: phase transitions
+  arrive as `{:run_phase, _}` messages instead of direct function calls.
+  The 13-step `run_phase` flow becomes a GenServer `handle_call` or
+  `handle_cast` handler.
+
+  (c) Apply `plan-state.md` schema pruning: remove `plan-id`,
+  `host-project`, `dev-root` fields; add `description:` field.
+
+  (d) Rename `{{RELATED_PLANS}}` placeholder to `{{VAULT_CATALOG}}`
+  throughout the spec, backlog, and memory. Delete references to
+  `related-plans.md` — vault catalog replaces it.
+
+  (e) Rewrite the TUI task: it is now a daemon client, not the process
+  main loop. `RatatuiDriver` is replaced by a client that connects to
+  the daemon.
+
+  (f) Add DispatchProcessor and QueryProcessor as phase-exit hooks in
+  the spec.
+
+  (g) Update every task in this backlog that references Rust crates,
+  Rust traits, Rust-specific patterns, or the old single-process
+  architecture.
+
+  **No runtime code** — this task is spec + backlog + memory editing
+  only. It exists as a gate so downstream implementation tasks are
+  written against the correct Elixir/OTP contract. Acceptance: the spec
+  and backlog contain zero stale Rust references and are internally
+  consistent with the BEAM daemon architecture.
+- **Results:** _pending_
+
 ### Define core abstractions and types `[types]`
 - **Status:** not_started
-- **Dependencies:** Task 0, Absorb Sub-C trait amendments into B's design + types
+- **Dependencies:** Task 0, Absorb Sub-C trait amendments into B's design + types, Absorb LLM_CONTEXT 2026-04 overhaul into B's design + types, Absorb BEAM pivot into B's design, spec, and backlog
 - **Description:** Define the Rust types from §2.2 of the spec:
   `PlanContext`, `PlanState`, `LastExit`, `Phase`, `ResolvedPaths`,
   `PhaseRunner`, `PhaseOutcome`, `PhaseEvent`, `PhaseError`,
@@ -180,34 +324,47 @@ best next task with input from the user.
 - **Status:** not_started
 - **Dependencies:** Define core abstractions and types
 - **Description:** Create `src/prompts.rs` with `include_str!` macros
-  loading the four vendored prompt-reference files from
-  `{{PROJECT}}/prompts/`. Expose `BACKLOG_PLAN_SPEC`,
-  `CREATE_MULTI_SESSION_PLAN`, `CODING_STYLE`, `CODING_STYLE_RUST` as
-  `&'static str` constants. Implement `materialise_into(prompts_dir:
-  &Path) -> Result<()>` that writes the four files into a target
-  directory. Copy the actual content from
-  `{{DEV_ROOT}}/LLM_CONTEXT/backlog-plan.md`,
-  `create-a-multi-session-plan.md`, `coding-style.md`, and
-  `coding-style-rust.md` into `{{PROJECT}}/prompts/` as part of this
-  task. Unit tests verify: materialise produces the expected files,
-  binary-level byte-equal content with the vendored sources.
+  loading the vendored upstream files from `{{PROJECT}}/prompts/`.
+  Expose as `&'static str` constants: `PHASE_WORK`, `PHASE_REFLECT`,
+  `PHASE_COMPACT`, `PHASE_TRIAGE` (the four shared phase prompts),
+  `CODING_STYLE`, `CODING_STYLE_RUST`, `MEMORY_STYLE` (the three
+  fixed-memory files — `MEMORY_STYLE` is read by both reflect and
+  compact and is the lossless-rewrite contract's stability anchor),
+  and `CREATE_PLAN` (the plan-creation spec). Implement
+  `materialise_into(prompts_dir: &Path) -> Result<()>` that writes
+  every file into a target directory preserving upstream's
+  `phases/` and `fixed-memory/` subdirectory layout. Copy the actual
+  content from `{{DEV_ROOT}}/LLM_CONTEXT/phases/{work,reflect,compact,triage}.md`,
+  `{{DEV_ROOT}}/LLM_CONTEXT/fixed-memory/{coding-style,coding-style-rust,memory-style}.md`,
+  and `{{DEV_ROOT}}/LLM_CONTEXT/create-plan.md` into
+  `{{PROJECT}}/prompts/` as part of this task. The pre-overhaul
+  filenames `backlog-plan.md` and `create-a-multi-session-plan.md`
+  are deleted/renamed upstream and must NOT appear in `prompts.rs`
+  or in the vendored tree. Unit tests verify: materialise produces
+  the expected files at the expected paths, binary-level byte-equal
+  content with the vendored sources, subdirectory layout preserved.
 - **Results:** _pending_
 
 ### Implement placeholder substitution algorithm `[substitution]`
 - **Status:** not_started
 - **Dependencies:** Define core abstractions and types
 - **Description:** Implement forward and reverse substitution as pure
-  functions against the four placeholders (`{{DEV_ROOT}}`,
-  `{{PROJECT}}`, `{{PLAN}}`, `{{PROMPTS}}`). Forward: walk a file's text
-  and replace each placeholder with its resolved absolute path.
-  Reverse: walk a file's text and replace each absolute path with its
-  placeholder, using longest-match-first ordering (PLAN before PROJECT
-  before DEV_ROOT) to avoid prefix collisions. Use `regex` with a
-  static precompiled pattern. Unit tests cover: all four placeholders
-  substituted correctly, longest-match-first ordering against prefix
-  collision inputs, round-trip (forward then reverse) returns the
-  original, edge cases (empty file, file with no placeholders, file
-  with multiple occurrences of the same placeholder).
+  functions against five placeholders (`{{DEV_ROOT}}`, `{{PROJECT}}`,
+  `{{PLAN}}`, `{{PROMPTS}}`, `{{RELATED_PLANS}}`). Forward: walk a
+  file's text and replace each placeholder with its resolved value —
+  absolute paths for `{{DEV_ROOT}}` / `{{PROJECT}}` / `{{PLAN}}` /
+  `{{PROMPTS}}`, a synthesised multi-line block of sibling / parent /
+  child plan paths for `{{RELATED_PLANS}}`. Reverse: walk a file's
+  text and replace each absolute path with its placeholder, using
+  longest-match-first ordering (PLAN before PROJECT before DEV_ROOT)
+  to avoid prefix collisions. `{{RELATED_PLANS}}` is forward-only —
+  reverse substitution does not need to reconstruct it. Use `regex`
+  with a static precompiled pattern. Unit tests cover: all five
+  placeholders substituted correctly, longest-match-first ordering
+  against prefix collision inputs, round-trip (forward then reverse)
+  returns the original for non-`{{RELATED_PLANS}}` placeholders, edge
+  cases (empty file, file with no placeholders, file with multiple
+  occurrences of the same placeholder).
 - **Results:** _pending_
 
 ### Implement `StagingDirectory::render` `[staging]`
@@ -284,11 +441,14 @@ best next task with input from the user.
   compute next phase, update `last_exit`, persist, emit `PhaseExited`,
   fire `ReflectExitHook` if phase was reflect, cleanup staging.
   Integration tests use `FixtureReplayExecutor` and a fixture plan
-  directory. Test coverage: full happy path (work → reflect → triage
-  → work round-trip), illegal transition rejection, copy-back rejection
-  aborts cleanly, hook fires exactly once on reflect exit, hook does
-  NOT fire on work or triage exit, state persistence at every
-  transition boundary, event emission order.
+  directory. Test coverage: full happy path (work → reflect → compact
+  → triage → work round-trip AND work → reflect → triage → work
+  round-trip when the compact trigger skips compact), illegal
+  transition rejection, copy-back rejection aborts cleanly, hook
+  fires exactly once on reflect exit, hook does NOT fire on work /
+  compact / triage exit, state persistence at every transition
+  boundary, event emission order, compact-trigger wc-word-count
+  logic skips compact under the headroom and runs it above.
 - **Results:** _pending_
 
 ### Implement `PhaseRunner::interrupt` and the Interrupted flow `[runner]`
@@ -314,14 +474,16 @@ best next task with input from the user.
 - **Description:** Implement the human-driven executor per §2.2.4 of
   the spec. Writes `<staging>/phase-prompt.readonly.md` with the
   substituted phase prompt text. Determines target file(s) for the
-  phase (`work` → backlog.md + session-log.md; `reflect` → memory.md +
-  session-log.md; `triage` → backlog.md). Spawns `$EDITOR` (resolved
-  from the `EDITOR` environment variable; fall back to hard error if
-  unset) blocked on the target files. Waits for editor exit. Returns
-  `Ok(())` on clean exit, `ExecutorError::EditorFailed` on non-zero.
-  `interrupt()` is a no-op. Integration tests use a scripted editor
-  stub (e.g., a shell script that edits a file then exits) to
-  exercise the full flow through `PhaseRunner`.
+  phase (`work` → backlog.md + latest-session.md; `reflect` →
+  memory.md (reads latest-session.md as input); `compact` → memory.md
+  (lossless rewrite); `triage` → backlog.md). Spawns `$EDITOR`
+  (resolved from the `EDITOR` environment variable; fall back to
+  hard error if unset) blocked on the target files. Waits for editor
+  exit. Returns `Ok(())` on clean exit, `ExecutorError::EditorFailed`
+  on non-zero. `interrupt()` is a no-op. Integration tests use a
+  scripted editor stub (e.g., a shell script that edits a file then
+  exits) to exercise the full flow through `PhaseRunner`, including
+  the compact phase path.
 - **Results:** _pending_
 
 ### Implement `LlmHarnessExecutor` with Claude Code stub adapter `[executor]`
@@ -540,19 +702,21 @@ best next task with input from the user.
   against real Claude Code
 - **Description:** The v1 acceptance test. Migrate the orchestrator
   seed plan and sub-E's sibling plan from `phase.md` +
-  `run-backlog-plan.sh` to `plan-state.md` + Mnemosyne v1. This
+  LLM_CONTEXT's `run-plan.sh` to `plan-state.md` + Mnemosyne v1. This
   depends on sub-project G's migration logic being available — if G
   is not yet done, perform the migration manually as a one-shot for
   these two plans as part of this task's scope (document the manual
-  steps clearly). Run a full work → reflect → triage cycle of the
-  orchestrator plan on Mnemosyne v1 end-to-end: Ratatui TUI, real
-  Claude Code harness via the stub adapter, real ingestion pipeline
-  from sub-E, real vault at `<dev-root>/Mnemosyne-vault/`. Success
-  criteria: cycle completes cleanly, all events emitted correctly,
-  plan state persisted consistently, ingestion fired exactly once,
-  no hard errors, the user can retire `run-backlog-plan.sh` for
-  these two plans and proceed on Mnemosyne for all future sessions.
-  This is the moment v1 ships.
+  steps clearly). Run a full work → reflect → (compact) → triage
+  cycle of the orchestrator plan on Mnemosyne v1 end-to-end: Ratatui
+  TUI, real Claude Code harness via the stub adapter, real ingestion
+  pipeline from sub-E, real vault at `<dev-root>/Mnemosyne-vault/`.
+  Must exercise both the compact-skipped and compact-run branches of
+  the wc-word-count trigger. Success criteria: cycle completes
+  cleanly, all events emitted correctly, plan state persisted
+  consistently, ingestion fired exactly once, no hard errors, the
+  user can retire LLM_CONTEXT's `run-plan.sh` for these two plans
+  and proceed on Mnemosyne for all future sessions. This is the
+  moment v1 ships.
 - **Results:** _pending_
 
 ### Implementation notes and handoff documentation `[docs]`

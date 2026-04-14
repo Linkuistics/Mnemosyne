@@ -167,6 +167,22 @@ on each cycle: when any of the queued sibling plans transitions from
 `not_started` to `done` (brainstormed), the next triage adds the
 adoption task to that sibling's backlog.
 
+## BEAM pivot — pending amendment
+
+The orchestrator's Session 9 committed Mnemosyne to a persistent BEAM
+daemon (Elixir/OTP). This plan's entire backlog was brainstormed assuming
+Rust (`tracing` + `MnemosyneEvent` enum). The orchestrator now tracks a
+"Sub-M amendment" task to re-cast the implementation from Rust `tracing`
+to Elixir `:telemetry` + `Mnemosyne.Event.*` typed structs. Additional
+scope from the pivot: sub-F's event types (dispatch/query events, actor
+lifecycle events, rule firings) join the sealed event set; `prom_ex` or
+equivalent replaces the `metrics` + `metrics-util` crate stack for
+Prometheus export. **Until the amendment lands, the backlog tasks below
+are stale and must not be executed as written.** The amendment will
+rewrite tasks to target Elixir/OTP idioms (`:telemetry`, `prom_ex`,
+GenServer-based ring buffers, etc.) while preserving the same
+observability goals.
+
 ## Open questions
 
 These do not block implementation but should be resolved during v1 build.

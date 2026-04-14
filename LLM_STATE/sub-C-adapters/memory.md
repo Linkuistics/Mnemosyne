@@ -214,6 +214,41 @@ the pinned `claude` version, and the verification timestamp.
   C deliberately does **not** commit to a structured logging crate
   (`tracing`, `slog`, `log`, etc.) so M has full freedom.
 
+## BEAM / Elixir pivot (Session 9 amendment)
+
+The orchestrator's Session 9 committed Mnemosyne to a persistent BEAM
+daemon (Elixir/OTP). Sub-C's entire design was brainstormed assuming Rust
+with actor threading. The orchestrator now tracks a "Sub-C amendment —
+Elixir implementation and multi-adapter reservation" task with the
+following consequences:
+
+- **Implementation language**: Elixir, not Rust.
+- **Process spawning**: `erlexec` replaces `std::process::Command`.
+- **Supervision**: OTP GenServer supervision replaces the hand-rolled
+  actor-style threading (crossbeam-channel inbox, three threads per
+  session, etc.).
+- **Trait surface**: `HarnessSpawner` becomes an Elixir behaviour, not a
+  Rust trait.
+- **Tool-call boundary**: in-session Queries use a tool-call boundary
+  (new architectural element).
+- **Multi-adapter support**: reserved for sub-O; sub-C ships
+  single-adapter only.
+
+**Blocking dependency**: the entire amendment is blocked on the **BEAM PTY
+spike (Priority 0)**. That spike validates whether `erlexec` can cleanly
+spawn Claude Code with PTY I/O, stream-json, sentinel detection, and
+process-group termination. Until the spike resolves, no implementation
+work on sub-C should begin.
+
+**Impact on existing backlog**: every task in `backlog.md` is written
+against the Rust implementation assumption (Cargo.toml, `src/harness/`,
+crossbeam, nix, etc.). Once the BEAM PTY spike resolves successfully, the
+backlog must be rewritten for Elixir/OTP. The task *sequence* (types →
+fixture replay → live adapter → tests → dogfood gate) and the *design
+intent* (tool profiles, process-group termination, cold-spawn latency
+gate, fixture replay parity) remain valid; only the implementation
+technology changes.
+
 ## Open questions (implementation-level)
 
 These are the §10 verification IOUs from the spec. Each is a day-1

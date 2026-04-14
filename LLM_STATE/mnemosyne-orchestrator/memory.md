@@ -5,7 +5,7 @@ Drives the merge of LLM_CONTEXT functionality into Mnemosyne, transforming it in
 ## Stable architectural decisions
 
 ### Fresh LLM context is a first-class design goal
-Every LLM-using component must use many short, fresh sessions rather than one long accumulating session. Context rot (drift, noise, stale assumptions) is a primary failure mode; phase cycle session boundaries are a feature, not a cost. B's phase boundaries, C's harness lifecycle, E's ingestion triggers, F's Level 2 routing agents, and N's expert consultations must default to discrete fresh-context invocations with explicit state handoff through files.
+Every LLM-using component must use many short, fresh sessions rather than one long accumulating session. Context rot (drift, noise, stale assumptions) is a primary failure mode; phase cycle session boundaries are a feature, not a cost. Governing heuristic: **context depth scales with decision specificity** — Level 1 reasons broadly about its own plan, Level 2 reasons narrowly about one target project's code, Level 3 (if needed) reasons about one specific plan. Each level refocuses context rather than accumulating it. B's phase boundaries, C's harness lifecycle, E's ingestion triggers, F's Level 2 routing agents, and N's expert consultations must default to discrete fresh-context invocations with explicit state handoff through files.
 
 ### Mnemosyne is a persistent actor daemon on BEAM
 V1 runs as a single long-running Elixir/OTP application. `mnemosyne daemon` is the entry point; it hosts all actors, message routing, supervision, harness adapters, fact extraction, and ingestion. Previous per-plan-CLI-invocation framing is retired. OTP supervision, message passing, hot code reload, and distribution transparency are all BEAM primitives the design would otherwise hand-roll — when a design process independently arrives at OTP's decisions, that's the universe signaling the runtime. Gleam is reserved as a future migration target if Elixir's dynamic typing proves painful for the invariant-heavy design.
@@ -20,6 +20,9 @@ Both share target resolution, declarative routing, Level 2 fallback, audit trail
 
 ### project-root as reserved plan directory
 Every adopted project has exactly one root plan at `<project>/mnemosyne/project-root/`. Name is **reserved**. Collapses the earlier `<project>/mnemosyne/plans/` container (which was always single-child). `knowledge/` stays as a sibling of `project-root/`, not inside it, preserving B's "plan membership is purely `plan-state.md`" invariant. Adoption check = `<project>/mnemosyne/project-root/plan-state.md` exists. Nested child plans nest arbitrarily under project-root.
+
+### Filesystem-derivable data is never cached in metadata
+If a value can be computed from the filesystem path or directory structure, it must not be stored in frontmatter or config. Filesystem is authoritative; metadata projections drift. Applies to qualified IDs, host-project names, dev-root paths, and any future candidate. See "Path-based qualified plan IDs, never stored" for the primary instance.
 
 ### Path-based qualified plan IDs, never stored
 A plan's qualified ID is a pure function of its filesystem path: `strip_prefix(plan_path, "<vault>/projects/")`. Examples: `Mnemosyne/project-root`, `Mnemosyne/project-root/sub-F-hierarchy`. Never stored in `plan-state.md` frontmatter — storing would be a duplicate source of truth. Filesystem is authoritative; qualified IDs computed at read time. F's coordination amendment to B removes `plan-id`, `host-project`, `dev-root` from plan-state.md schema.

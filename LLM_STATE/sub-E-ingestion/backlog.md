@@ -5,13 +5,54 @@ doc at
 `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md`.
 Consult the spec before starting any task.
 
-Tasks are listed in approximately recommended order. Deterministic Rust
-work comes first (stages 1, 2, 5 and the six invariants), then event
-emission and persistence, then LLM-integration stages (3 and 4) with a
-fixture-replay adapter stub, then human-mode affordances, then end-to-end
-tests. The work phase picks the best next task with input from the user.
+Tasks are listed in approximately recommended order. The F amendment task
+comes first (re-casts the implementation to Elixir and Stage 5 to
+expert-dispatch). Then deterministic stages (1, 2, 5 and the six
+invariants), then event emission and persistence, then LLM-integration
+stages (3 and 4) with a fixture-replay adapter stub, then human-mode
+affordances, then end-to-end tests. The work phase picks the best next task
+with input from the user.
+
+**BEAM pivot note:** The original backlog was written assuming Rust. All
+Rust-specific framing (types as Rust structs, `Vec<>`, `tokio mpsc`, trait
+objects) should be re-interpreted as Elixir equivalents (structs/typespecs,
+lists, GenStage/Broadway stages, behaviours) during implementation. The
+amendment task below makes this explicit.
 
 ## Task Backlog
+
+### F amendment — expert-dispatched knowledge curation `[amendment]`
+- **Status:** not_started
+- **Dependencies:** none (unblocked, can run in parallel with A/B/D/M amendments)
+- **Description:** Apply the orchestrator Session 9 BEAM pivot and F's
+  design-doc amendments to sub-E's implementation plan. Concrete changes:
+  1. **Stage 5 re-design:** Replace direct store writes with dispatch-to-experts
+     via Query messages (F's message type). Candidate entries from Stage 4
+     reconciliation are sent as Queries to ExpertActors (sub-N). Experts
+     review in fresh context and absorb, reject, or cross-link. Multi-expert
+     absorption is allowed.
+  2. **Elixir re-cast:** All pipeline stages implemented in Elixir. GenStage
+     or Broadway replaces the tokio-channel pipeline composition. Rust type
+     definitions become Elixir structs with typespecs. Traits become
+     behaviours. `SafeFileWriter` becomes an Elixir module with the same
+     invariant enforcement.
+  3. **Event channel re-cast:** `tokio mpsc` channel becomes either a GenStage
+     producer-consumer or Phoenix.PubSub (aligning with M's `:telemetry` +
+     typed-event-struct pattern). The parallel-emit pattern with M's
+     observability bus is unchanged in intent.
+  4. **Query message contract:** Define the Query message schema that Stage 5
+     sends to experts — must include: candidate entry, proposed op, originating
+     section provenance, confidence, axis, tier routing decision. Sub-N
+     consumes this contract.
+  5. **Update the design spec** at
+     `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md`
+     to reflect Stage 5 and implementation language changes. Stages 1–4
+     sections unchanged; Stage 5 section rewritten; §2 type definitions
+     re-cast to Elixir; §5 risks updated (BEAM-specific risks replace
+     Rust-specific ones).
+  This is the prerequisite amendment task — all other backlog tasks should be
+  read through the lens of this amendment once it lands.
+- **Results:** _pending_
 
 ### Define core ingestion types `[types]`
 - **Status:** not_started

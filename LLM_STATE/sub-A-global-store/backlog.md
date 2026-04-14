@@ -11,6 +11,18 @@ functions → template authoring → commands → v0.1.0 deletion →
 observability stub → tests → docs. The work phase picks the best next
 task with input from the user.
 
+## BEAM Pivot Notice
+
+**All tasks below were authored assuming a Rust CLI.** The orchestrator's
+Session 9 committed Mnemosyne to a persistent BEAM daemon (Elixir/OTP)
+and the Rust CLI is retired. See `memory.md § BEAM pivot amendment` for
+the full translation guide. Task descriptions remain as intent
+specifications; the executing session translates Rust-specific idioms
+(cargo, serde, include_str!, clap, etc.) to Elixir/OTP equivalents.
+Tasks 11 and 12 (v0.1.0 Rust cleanup) are substantially reduced in
+scope — they become verification that old hardcoded paths are not
+carried into the Elixir daemon.
+
 ## Task Backlog
 
 ### Task 1 — Core types + `VAULT_SCHEMA_VERSION` constant `[types]`

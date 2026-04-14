@@ -925,3 +925,183 @@
     well-placed constraint from the user can collapse hours of
     unnecessary design work. In this session it landed at Q4
     and compressed the remaining forks significantly.
+
+### Session 8 (2026-04-14T08:52:02Z) — LLM_CONTEXT 2026-04 overhaul reconciliation
+
+- **Attempted:** Analyse LLM_CONTEXT's post-overhaul shape (commits
+  `9513ca3` "Rewrite create-plan.md for phase-file-factored layout",
+  `9eb6602` "Add phases/ directory", `d6f215b` "Move coding-style files
+  under fixed-memory/ and add memory-style.md", `096d8dc` "Rewrite
+  run-plan.sh for shared-phase composition", `92d5ab2` rename
+  `run-backlog-plan.sh` → `run-plan.sh`, `7bb39b0` "Absorb backlog-plan.md
+  into README", plus the four-phase cycle introduction and
+  `pre-work.sh` hook additions) and reconcile all six generated
+  Mnemosyne plans (`mnemosyne-orchestrator`, `sub-A-global-store`,
+  `sub-B-phase-cycle`, `sub-C-adapters`, `sub-E-ingestion`,
+  `sub-M-observability`) with the new upstream shape. Path 1 per the
+  work-phase branch decision: fix the drift here and now rather than
+  deferring.
+
+- **What worked:**
+  - Classified the impact as mostly-additive to Mnemosyne's merge
+    plan — no design decisions invalidated, just stale filenames and
+    a three-phase-shaped state machine that needs widening.
+  - Converted 24 absolute `/Users/antony/Development/...` references in
+    `mnemosyne-orchestrator/prompt-work.md` and
+    `sub-M-observability/prompt-{work,reflect,triage}.md` to
+    `{{DEV_ROOT}}` / `{{PROJECT}}` / `{{PLAN}}` placeholders. The
+    remaining four sub-plan `prompt-work.md` files (sub-A, sub-B,
+    sub-C, sub-E) were already clean.
+  - Fixed the `{{DEV_ROOT}}/GUIVisionVMDriver` reference in
+    `sub-B-phase-cycle/related-plans.md` to use the placeholder.
+  - Deleted `mnemosyne-orchestrator/related-plans.md` — the four
+    LLM_CONTEXT projects listed there were a non-disruption
+    constraint, not a cross-plan propagation relationship. That
+    constraint is already captured in `prompt-work.md` and
+    `memory.md`, so the related-plans file was overstating its role.
+  - Rewrote three orchestrator memory.md entries with drift:
+    "Self-containment from LLM_CONTEXT/ via embedded prompts" (new
+    vendor list: `phases/{work,reflect,compact,triage}.md`,
+    `fixed-memory/{coding-style,coding-style-rust,memory-style}.md`,
+    `create-plan.md`), "Phase cycle reimplemented in Rust" (widened
+    to four phases with compact-trigger semantics),
+    "run-backlog-plan.sh substitutes..." → "run-plan.sh substitutes
+    `{{DEV_ROOT}}` / `{{PROJECT}}` / `{{PLAN}}` / `{{RELATED_PLANS}}`".
+    Added one new entry: "`fixed-memory/memory-style.md` is the single
+    source of truth for memory entry rules" (read by both reflect and
+    compact; B must vendor it; the compact lossless-rewrite contract
+    is only meaningful relative to that stable rule set).
+  - Amended the orchestrator G (migration) task description with the
+    new per-plan artefacts G now inherits: `pre-work.sh`,
+    `prompt-compact.md` / `prompt-reflect.md` / `prompt-triage.md`
+    preservation, script-managed `compact-baseline`,
+    `related-plans.md` schema change, and the phase enum widening to
+    include `compact`.
+  - Landed a new `[amendment]` task in sub-B's backlog:
+    "Absorb LLM_CONTEXT 2026-04 overhaul into B's design + types".
+    It gates "Define core abstractions and types" (parallels the
+    existing Sub-C trait amendments task) and enumerates eight
+    concrete spec edits: four-phase cycle, phase enum widening,
+    phase composition mechanism, `pre-work.sh` hook contract,
+    `{{RELATED_PLANS}}` placeholder, `related-plans.md` schema,
+    ISO 8601 timestamps, vendor list. The existing "Implement
+    embedded prompts module" task and "Implement placeholder
+    substitution" task were rewritten against the new contract;
+    "Implement PhaseRunner::run_phase" test coverage grew to cover
+    both the compact-skipped and compact-run branches; the dogfood
+    task references were updated from `run-backlog-plan.sh` to
+    `run-plan.sh` and from "work → reflect → triage" to "work →
+    reflect → (compact) → triage"; `ManualEditorExecutor`'s
+    phase-target-file mapping gained the compact row.
+  - Added four new entries to sub-B's memory.md quick-reference:
+    "The cycle is four phases", "Vendored upstream files",
+    "Phase composition: shared phase file + optional per-plan
+    override", "Optional `pre-work.sh` executable hook". Also
+    extended "The substitution gap closer" with `{{RELATED_PLANS}}`
+    as the fifth placeholder.
+  - Rewrote `sub-M-observability/prompt-triage.md`'s "Cross-plan
+    adoption coordination" step to use dispatched subagents instead
+    of instructing triage to read the parent orchestrator backlog
+    directly. The direct-read pattern conflicts with the new
+    triage discipline: "Never read foreign plan content — cross-plan
+    awareness comes from the Related plans block and dispatched
+    subagents." M's §10 cross-plan ownership obligation survives;
+    the mechanism shifts to subagents. Sibling awareness of the
+    parent orchestrator plan comes free from the auto-discovered
+    `{{RELATED_PLANS}}` block.
+
+- **What didn't:** Nothing abandoned. The work is pure reconciliation —
+  no tests run, no code compiled, just spec/backlog/memory/prompt
+  editing. The "no code" posture is by design for the overhaul task.
+
+- **Suggests trying next:**
+  - F is now the natural next brainstorm pick per the original
+    orchestrator backlog ordering, with no blocker from the overhaul
+    reconciliation. F should explicitly confirm it inherits the
+    `related-plans.md` sibling auto-discovery semantics (i.e., F's
+    plan-hierarchy discovery algorithm is the sibling-discovery
+    algorithm LLM_CONTEXT uses today, generalised to nested plans).
+  - Sub-B's new `[amendment]` task is work that must land before
+    B's core-types implementation starts. Whoever picks B up next
+    does the amendment task first.
+  - Deferred consideration: whether the overhaul reconciliation
+    should have updated the sub-E or sub-A memory.md files. Search
+    showed neither plan had stale filename or cycle-shape
+    references; they already use `{{DEV_ROOT}}` placeholders. No
+    action was needed there and none taken.
+
+- **Key learnings / discoveries:**
+  - **The embedded-prompts vendor list is the forward-compatibility
+    chokepoint for LLM_CONTEXT evolution.** Every future LLM_CONTEXT
+    change that adds or renames a shared file forces a corresponding
+    update in sub-B's `prompts.rs` constants. This argues for either
+    (a) a build-time glob-and-embed macro that reads LLM_CONTEXT's
+    tree directly, or (b) a dedicated "vendor-list reconciliation"
+    task in B's backlog that re-derives the embedded file set from
+    upstream at implementation time. Option (a) would also catch
+    LLM_CONTEXT changes during B's own development, which is the
+    most common failure mode. Both defer to B's implementation
+    phase; captured in B's new memory entry "Vendored upstream
+    files (embedded prompts)" but not yet a separate task.
+  - **The new triage discipline (never read foreign plan content)
+    forces cross-plan coordination to flow through subagents.** M's
+    §10 cross-plan ownership obligation was written assuming
+    direct reads of the parent backlog; the new discipline breaks
+    that. The fix was mechanical — subagent dispatch — but the
+    pattern is general: any future plan that wants to react to
+    another plan's state must do so via subagents, not by reaching
+    into the foreign plan's files. Worth watching when sub-F and
+    sub-D brainstorms run, both of which will likely want
+    cross-plan awareness.
+  - **Drift in `memory.md` and `backlog.md` becomes load-bearing
+    fast because both files are read by LLM phases.** Drift in
+    `session-log.md` is fine — that file is never read by any LLM
+    phase. The rule: fix drift aggressively in memory/backlog, leave
+    session-log alone. This session explicitly left
+    `session-log.md` historical references to `backlog-plan.md`
+    untouched because they are accurate historical record of what
+    was true at the time.
+  - **Path placeholders vs. absolute paths is not cosmetic.** The
+    scan found eight files with stale absolute paths; converting
+    them to placeholders makes the plans portable to different dev
+    roots and matches the pattern the four sub-plans brainstormed
+    after the placeholder convention had settled (sub-A, sub-B,
+    sub-C, sub-E) already follow. The four correct plans and the
+    two incorrect ones (`mnemosyne-orchestrator`,
+    `sub-M-observability`) are split on brainstorm date, not
+    author.
+  - **"Path 1: fix now" vs "Path 2: defer to reflect/triage" was the
+    right call** for an overhaul of this size because the drift
+    touches six plans' load-bearing files. A reflect/triage pass
+    would have had to re-scan and re-derive the impact analysis from
+    memory alone, which compounds the drift risk. Fix-at-source is
+    the right default for upstream-infrastructure overhauls.
+
+### Session 9 (2026-04-14T11:48:52Z) — sub-F brainstormed; architecture pivoted to BEAM daemon
+
+- **What was attempted:** Drive the sub-F brainstorm from its narrow original scope ("plan hierarchy + root plan") through to a committed v1 architecture, producing a design doc plus comprehensive documentation overhaul (README, architecture.md, user-guide.md, configuration.md) for sharing the vision with others.
+
+- **What worked:**
+  - F's brainstorm expanded organically from plan hierarchy to the full v1 architecture. Each user push-back drove a deeper simplification: collapsing `plans/` → `project-root/`, removing cached qualified IDs, pivoting to project-level routing agents for cross-project dispatch, recognizing experts as actors, and ultimately committing to a persistent actor daemon on BEAM.
+  - The sunk-cost analysis for BEAM commit was decisive — user's observation that "less than a day of Rust code is written and the brainstorm has taken less than a day" reframed the choice from "should we pivot?" to "when is pivoting cheapest?" — and the answer was "right now."
+  - Documentation overhaul happened in the same work phase: F design doc (~2000 lines), new README with Mermaid diagrams, new `docs/architecture.md` as the comprehensive architectural overview, rewritten user-guide and configuration docs. All four docs frame Mnemosyne as a persistent daemon orchestrator, not a knowledge-store CLI.
+  - Memory and backlog updated to reflect new architectural commitments, new sub-projects (N, O, P), and amendment tasks for every affected sibling (A, B, C, D, E, G, H, I, M).
+  - The brainstorm itself exercised the insight that a design process "keeping arriving at OTP primitives" is the universe signaling which runtime to use. Every actor-model mechanism we were about to hand-roll (supervision, mailboxes, let-it-crash, message routing, distribution transparency) is a free BEAM primitive. Committing to Elixir reduces F's implementation effort by an estimated 2-3x relative to Rust-with-actix.
+
+- **What didn't work / what was deferred:**
+  - Sub-F sibling plan scaffolding was **deferred** because F's implementation plan depends on the BEAM PTY spike outcome (can `erlexec` cleanly spawn Claude Code?). Rather than write a plan in a language we might not use, the brainstorm committed to the BEAM spike as the critical next step.
+  - Amendment tasks for A, B, C, D, E, G, H, I, M are written to the orchestrator backlog but not yet dispatched to the siblings' own backlogs — that's what F's own triage phase would normally do, but this work phase focused on landing the design doc + documentation overhaul, so amendment-dispatch is deferred to the next cycle.
+  - The Rust v0.1.0 CLI code is logically retired but not physically deleted. The deletion is scoped into sub-G's migration plan.
+
+- **What this suggests trying next:**
+  - **BEAM PTY spike immediately.** This is the critical blocker for sub-F sibling plan scaffolding and for the whole v1 implementation path. A few hours of `erlexec` experimentation will either unblock the straightforward path or drive us to the Rust-PTY-wrapper fallback.
+  - After the spike: scaffold F's sibling plan with its Elixir-specific implementation tasks, then begin landing the amendment tasks for A/B/C/E/M so those done brainstorms are consistent with the new architecture.
+  - Sub-N (domain experts) brainstorm should come soon — F depends on ExpertActor shipping alongside PlanActor, and v1 needs a default expert set.
+  - Sub-D's much-reduced brainstorm ("daemon singleton + external-tool coordination") is a quick win that can happen in parallel with any other work.
+
+- **Key learnings / discoveries:**
+  - **Fresh context is first-class** crystallized into a concrete architectural principle during F's brainstorm: context depth scales with decision specificity. Level 1 reasons broadly about its own plan, Level 2 reasons narrowly about one target project's code, Level 3 (if needed) reasons about one specific plan. Each level refocuses context rather than accumulating it. This is the architectural endpoint of fresh-context discipline.
+  - **Filesystem-as-invariant beats metadata-as-invariant.** Three times during the F brainstorm we caught ourselves about to cache filesystem-derivable data in frontmatter (qualified ID, host project, dev root) and each time removing the cache simplified the design. The filesystem is authoritative; metadata projections can drift; the discipline is "if it can be computed, don't store it."
+  - **Knowledge as consultative actors** rather than data stores is the key move that makes fresh-context discipline work for knowledge access. A data store serves reads; an actor serves questions. When you ask a question, the expert retrieves and synthesizes in its own fresh context, returning prose to your session. Your session never loads the expert's knowledge. This is the logical endpoint of "don't load what you can ask for."
+  - **When a design process independently arrives at an existing framework's decisions, that's the universe telling you to use that framework.** We spent significant design energy specifying things OTP gives for free: supervision, mailboxes, let-it-crash, message passing, distribution transparency. Committing to Elixir reframes all of that work as "use the primitives that already exist" rather than "build our own versions."
+  - **Mixture of experts + mixture of models falls out as an economic consequence** of the actor model, not as a feature bolted on. Expert actors are narrow-scoped consultation tasks that often don't need Opus-class models. Per-actor model selection turns this into a first-class capability. Team mode similarly falls out as a transport change, not an architectural change — actors are already message-passing entities; making them cross-machine is one more implementation of the same primitive.
