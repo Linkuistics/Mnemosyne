@@ -341,7 +341,7 @@ Mnemosyne accumulates knowledge from and supports AI-assisted work on all Linkui
 
 - **[APIAnyware-MacOS](https://github.com/Linkuistics/APIAnyware-MacOS)** — macOS API surface code generator; FFI-heavy
 - **[GUIVisionVMDriver](https://github.com/Linkuistics)** — VM orchestration CLI for GUI testing
-- **[Modaliser-Racket](https://github.com/Linkuistics)** — Racket-based modal logic toolkit
+- **[Modaliser-Racket](https://github.com/Linkuistics)** — Racket port of the Modaliser modal-navigation keyboard launcher for macOS
 - **[RacketPro](https://github.com/Linkuistics)** — Racket IDE enhancements
 - **[TestAnyware](https://github.com/Linkuistics/TestAnyware)** — VM management and GUI testing strategies
 - **[*Pro IDEs](https://github.com/Linkuistics)** — language-specific IDE enhancements
