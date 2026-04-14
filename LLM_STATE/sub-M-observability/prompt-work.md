@@ -1,20 +1,13 @@
 # Work Phase — Sub-project M: Observability Framework
 
-Read the following before doing anything else:
+Read `/Users/antony/Development/LLM_CONTEXT/fixed-memory/coding-style.md`
+and `/Users/antony/Development/LLM_CONTEXT/fixed-memory/coding-style-rust.md`
+for coding conventions.
 
-1. `{{PROJECT}}/README.md` for Mnemosyne's project conventions, architecture,
-   CLI surface, and v0.1.0 status. Mnemosyne is a Rust project; build and
-   test commands are documented there.
-2. `{{DEV_ROOT}}/LLM_CONTEXT/backlog-plan.md` for the work / reflect / triage
-   phase cycle specification.
-3. `{{DEV_ROOT}}/LLM_CONTEXT/coding-style.md` and
-   `{{DEV_ROOT}}/LLM_CONTEXT/coding-style-rust.md` for coding conventions.
-4. `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
-   — the authoritative design document for this sub-project. Every task
-   below derives from this spec. Consult it before starting any task.
-5. `{{PLAN}}/backlog.md` for the current implementation task list.
-6. `{{PLAN}}/memory.md` for implementation-level decisions, cross-sub-project
-   dependencies, and implementation strategy notes.
+Read
+`/Users/antony/Development/Mnemosyne/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
+— the authoritative design document for this sub-project. Every backlog
+task derives from this spec. Consult it before starting any task.
 
 ## About this plan
 
@@ -24,11 +17,11 @@ five composed `tracing-subscriber::Layer`s) that gives every other
 sub-project a unified diagnostic / live-display / long-term-analysis
 substrate.
 
-The design is fully specified in the design doc referenced above; this
-plan is the implementation work, not a design phase. Do not re-litigate
-design decisions here; surface them to the parent plan
-(`{{PROJECT}}/LLM_STATE/mnemosyne-orchestrator/memory.md`) if you discover
-a spec-level issue during implementation.
+The design is fully specified in the design doc above; this plan is the
+implementation work, not a design phase. Do not re-litigate design
+decisions here; surface them to the parent plan
+(`/Users/antony/Development/Mnemosyne/LLM_STATE/mnemosyne-orchestrator/memory.md`)
+if you discover a spec-level issue during implementation.
 
 ### Sub-project M is cross-cutting
 
@@ -40,7 +33,7 @@ queued in this plan's `memory.md` and land in those sibling backlogs as
 those sub-projects' brainstorms complete (handled by this plan's triage
 phase on each cycle).
 
-### Key constraints during implementation
+## Key constraints
 
 - **Hard errors by default.** Layer registration failures, schema
   mismatches, disk write failures all fail loud. The only tolerated
@@ -68,11 +61,15 @@ phase on each cycle).
   subtree.** B owns staging / interrupts / ingestion events / locks; M
   owns events / metrics / observability summaries. Both live under the
   same `<vault>/runtime/` root.
-- **Test and build commands**: see `{{PROJECT}}/README.md`. For Rust
-  work, use `cargo test`, `cargo clippy`, and `cargo +nightly fmt` per
-  `{{DEV_ROOT}}/LLM_CONTEXT/coding-style-rust.md`.
 
-### Dependencies on sibling sub-projects
+## Commands
+
+Build / test / lint commands live in
+`/Users/antony/Development/Mnemosyne/README.md`. For Rust work, use
+`cargo test`, `cargo clippy`, and `cargo +nightly fmt` per
+`/Users/antony/Development/LLM_CONTEXT/fixed-memory/coding-style-rust.md`.
+
+## Dependencies on sibling sub-projects
 
 Sub-project M is largely self-contained at the framework level — it
 defines types, layers, and a startup function. The cross-sub-project
@@ -87,36 +84,3 @@ plan. Two consequences:
    progress — they exercise call sites that live in those plans. If a
    prerequisite sibling task is not yet `done`, defer the M task and
    pick a different one.
-
-## Path placeholders
-
-Any path beginning with `{{PROJECT}}`, `{{DEV_ROOT}}`, or `{{PLAN}}` should
-be interpreted as the absolute path the shell script substitutes before
-passing the prompt to the LLM. If you see a literal `{{PROJECT}}`,
-`{{DEV_ROOT}}`, or `{{PLAN}}` token in any file you Read inside the dev
-root, substitute it mentally with the correct absolute path before passing
-it to the Read tool.
-
-## Working a task
-
-1. Display a summary of the current backlog: title, status, and the
-   relative priority order (top of the backlog file = highest priority).
-2. Ask the user if they have input on which task to work on next. Wait
-   for their response. If they have a preference, work on that task;
-   otherwise pick the highest-priority `not_started` task whose
-   dependencies are all `done`.
-3. Work the task using TDD: write the failing test first, implement the
-   minimum code to pass, refactor, commit. Consult the design doc for
-   any behavioural question.
-4. Run the full test suite and clippy before declaring the task done.
-   No task ships with failing tests or new warnings.
-5. Record results in `{{PLAN}}/backlog.md` — replace `_pending_` with
-   a concrete summary of what was built, tests added, and any
-   surprises. Update the task `Status` to `done`.
-6. Append a session log entry to `{{PLAN}}/session-log.md` per the
-   format in `{{DEV_ROOT}}/LLM_CONTEXT/backlog-plan.md`:
-   `### Session N (YYYY-MM-DD) — title`, bullets for what was attempted,
-   what worked / didn't, what to try next, key learnings.
-7. Write `reflect` to `{{PLAN}}/phase.md`.
-8. Stop. Do not pick another task. Do not enter the reflect phase
-   yourself — the next phase runs in a fresh session.
