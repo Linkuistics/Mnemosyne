@@ -17,7 +17,7 @@ Tasks for merging LLM_CONTEXT functionality into Mnemosyne and building the pers
 ## Priority 0 — Unblock F implementation
 
 ### BEAM PTY spike — validate sub-C approach `[spike]`
-- **Status:** not_started
+- **Status:** done (Session 10, 2026-04-15)
 - **Dependencies:** F brainstorm complete (done)
 - **Owner:** sub-C amendment
 - **Description:** Validate that `erlexec` (or similar Elixir/Erlang PTY library) can cleanly spawn Claude Code with:
@@ -28,6 +28,15 @@ Tasks for merging LLM_CONTEXT functionality into Mnemosyne and building the pers
   - Backpressure-friendly streaming output
 
   This is the one real ecosystem unknown after the BEAM commitment. A few hours of spike work will answer it. If `erlexec` works cleanly, sub-C's amendment task is straightforward and F's sibling plan scaffolding can proceed. If `erlexec` fails, the fallback is a small Rust PTY-wrapper binary invoked from Elixir as an Erlang Port.
+- **Results:** **PASS**, with one important inversion. Spike at `spikes/beam_pty/` using Elixir 1.19.5 + Erlang/OTP 28 + erlexec 2.2.3. 8/8 tests green (6 sentinel unit + 2 live probes against the real `claude` CLI on haiku). Evidence at `spikes/beam_pty/results/full-run.log`.
+  - **Inversion**: the "PTY" premise was wrong. `claude -p --input-format stream-json --output-format stream-json` is pure NDJSON over stdio — no pseudo-terminal required. Worse, erlexec's `:pty + :stdin` combination does NOT wire the caller's pipe to the child's real stdin: claude reads nothing and errors with `Input must be provided either through stdin or as a prompt argument when using --print`. Pipes-only (`[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group]`) works perfectly — `:exec.send/2` delivers NDJSON to the child, output arrives as `{:stdout, ospid, binary}` messages for each line (`system/init`, `rate_limit_event`, `assistant/thinking`, `assistant/text`, `result/success`), `{:DOWN, ospid, :process, pid, reason}` fires on exit.
+  - **Sentinel detection**: sliding-buffer matcher with window bounded to `sentinel_size - 1` bytes validated against single-chunk, two-chunk split, grapheme-by-grapheme drip, false-prefix, and false-overlap cases. Successfully detects claude's assistant text when instructed to emit the sentinel.
+  - **Process-group termination**: `:kill_group` option + `:exec.kill(ospid, 15)` followed by a 500ms grace window and SIGKILL fallback kills the grandchild of `/bin/sh -c "sleep 60 & wait"`. Verified with `kill -0` liveness check.
+  - **Tool profiles**: `--disallowed-tools` passes through at CLI flag level. Visible in the `system/init` event's `tools` array. No adapter work needed.
+  - **Backpressure**: BEAM mailboxes are unbounded; draining via `receive` that processes each chunk before accepting the next is sufficient. No dropped data observed.
+  - **Known noise**: user-global `settings.json` cmux SessionStart hooks emit ~10KB of hook JSON on every claude invocation. Silenced with `--setting-sources project,local --no-session-persistence`.
+  - **Takeaway for sub-C amendment**: drop "PTY" from the stream-json path entirely. Wrap one GenServer per live session, parse NDJSON lines, dispatch to sub-M telemetry boundary, route tool-use events to in-session query handler. Detect `{"type":"result"}` as the protocol-level "turn over" signal, orthogonal to the phase-prompt sentinel (task-level "done"). Full recommendations in `spikes/beam_pty/README.md`.
+  - **Unblocks**: P1.3 (sub-C amendment), P3.1 (sub-F sibling plan scaffolding), and by extension the entire sub-C + sub-F implementation runway.
 
   **Exit criteria**: either a working Elixir script that spawns Claude Code, runs a trivial prompt, captures output until a sentinel, and terminates the process cleanly — or a documented reason why the approach won't work, with a fallback plan.
 
@@ -37,6 +46,8 @@ Tasks for merging LLM_CONTEXT functionality into Mnemosyne and building the pers
 ## Priority 1 — F-triggered amendments to done brainstorms
 
 F's architecture commitment affects every done brainstorm. Each amendment is a short work phase: read the existing design doc, identify Rust-specific or pre-F-specific sections, replace with BEAM/actor/dispatch-aware equivalents, commit.
+
+**Execution note (triage 2026-04-15):** Five tasks in this section are currently unblocked and can run in parallel: Sub-A amendment, Sub-B amendment, Sub-D brainstorm, Sub-E amendment, Sub-M amendment. Sub-C amendment is blocked on the BEAM PTY spike (P0). Sub-G, Sub-H, and Sub-I amendments produce scope-framing documents for future brainstorms of those sub-projects (no existing design doc to amend — these capture F's impact on the brainstorm scope). See Priority 2 for the corresponding G/H/I brainstorm tasks.
 
 ### Sub-A amendment — daemon caller integration `[amendment]`
 - **Status:** not_started
@@ -168,9 +179,33 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
 
 ## Priority 2 — Remaining sub-project brainstorms
 
+### Brainstorm sub-project G — migration `[brainstorm]`
+- **Status:** not_started
+- **Dependencies:** Sub-G amendment complete (Priority 1)
+- **Description:** Design the migration path from `LLM_STATE/` + `LLM_CONTEXT/` to `<project>/mnemosyne/` + the BEAM daemon. Scope includes: directory renames, `phase.md` → `plan-state.md`, daemon start step, Rust CLI retirement, per-project `project-root/` creation, vault catalog regeneration, and the Session 8 carry-forward items (`pre-work.sh`, `prompt-*.md`, `compact-baseline`, `related-plans.md` schema deletion). F-impact notes in the Sub-G amendment task (Priority 1) define the scope constraints.
+
+  Output: design doc at `docs/superpowers/specs/YYYY-MM-DD-sub-G-migration-design.md` and sibling plan at `LLM_STATE/sub-G-migration/`.
+- **Results:** _pending_
+
+### Brainstorm sub-project H — skills as TUI actions `[brainstorm]`
+- **Status:** not_started
+- **Dependencies:** Sub-H amendment complete (Priority 1); Sub-B amendment complete
+- **Description:** Design how the 7 Claude Code skills fold into attached-client TUI actions. F-impact notes in the Sub-H amendment task (Priority 1) define the framing: skills become daemon commands routed through the NDJSON protocol, not harness slash commands. Co-equal-actors principle means every skill must have a human-driven TUI form. Some skills may be superseded by dispatch-to-experts.
+
+  Output: design doc at `docs/superpowers/specs/YYYY-MM-DD-sub-H-skills-design.md` and sibling plan at `LLM_STATE/sub-H-skills/`.
+- **Results:** _pending_
+
+### Brainstorm sub-project I — Obsidian coverage document `[brainstorm]`
+- **Status:** not_started
+- **Dependencies:** Sub-I amendment complete (Priority 1)
+- **Description:** Document which Obsidian features cover which Mnemosyne data surfaces (Tier 1/2 knowledge, plan state, sessions, ingestion provenance, vault catalog, routing rules). F-impact notes in the Sub-I amendment task (Priority 1) add: Obsidian as daemon client, vault catalog as new data surface, daemon event stream possibilities. Produce the `.obsidian/` template that ships with v1.
+
+  Output: design doc at `docs/superpowers/specs/YYYY-MM-DD-sub-I-obsidian-coverage-design.md`.
+- **Results:** _pending_
+
 ### Brainstorm sub-project N — domain experts `[brainstorm]` (new, F-added)
 - **Status:** not_started
-- **Dependencies:** F done; F's sibling plan scaffolding complete (deferred until BEAM spike)
+- **Dependencies:** F done (satisfied). N's brainstorm needs F's design doc, not F's implementation task list — the sibling plan scaffolding is NOT a prerequisite for N's brainstorm. N's *implementation* plan may depend on F's scaffolding landing first.
 - **Description:** Design the ExpertActor type F reserved as a type hole. Scope:
   - **Declaration file format** at `<vault>/experts/<expert-id>.md`: persona, knowledge scope, retrieval strategy, optional model override
   - **Persona authoring**: how users write effective personas; examples for each default expert

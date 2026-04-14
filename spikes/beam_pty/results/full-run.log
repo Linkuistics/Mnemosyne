@@ -1,0 +1,46 @@
+exec: port program: "/Users/antony/Development/Mnemosyne/spikes/beam_pty/_build/test/lib/erlexec/priv/aarch64-apple-darwin25.4.0/exec-port" -debug 0 -verbose 0
+Running ExUnit with seed: 537693, max_cases: 20
+Including tags: [:live]
+
+......exec got msg from port: {1,{pid,51829}}
+exec added monitor <0.209.0> for OsPid 51829exec got msg from port: {0,{stdout,51829,<<"CHILD_PID=51830\n">>}}
+exec got msg from port: {1,ok}
+exec got msg from port: {0,{exit_status,51829,15}}
+Pid 51829 exited with status: signaled {0,15}
+<0.209.0> 51829 got down message ({signal,sigterm,false}) (ismon=true)
+
+09:00:29.600 [error] GenServer :exec terminating
+** (stop) {:exit_status, 1}
+Last message: {#Port<0.5>, {:exit_status, 1}}
+State: {:state, #Port<0.5>, 0, {[], []}, [], :exec_mon, 0, false}
+exec: port program: "/Users/antony/Development/Mnemosyne/spikes/beam_pty/_build/test/lib/erlexec/priv/aarch64-apple-darwin25.4.0/exec-port" -debug 0 -verbose 0
+.exec got msg from port: {1,{pid,51835}}
+exec added monitor <0.212.0> for OsPid 51835exec got msg from port: {0,
+                         {stdout,51835,
+                                 <<"{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/Users/antony/Development/Mnemosyne/spikes/beam_pty\",\"session_id\":\"d7b96958-ed67-403d-9f08-848fd6b4a13a\",\"tools\":[\"Task\",\"AskUserQuestion\",\"CronCreate\",\"CronDelete\",\"CronList\",\"EnterPlanMode\",\"EnterWorktree\",\"ExitPlanMode\",\"ExitWorktree\",\"Glob\",\"Grep\",\"Monitor\",\"NotebookEdit\",\"RemoteTrigger\",\"ScheduleWakeup\",\"Skill\",\"TaskOutput\",\"TaskStop\",\"TodoWrite\",\"ToolSearch\",\"WebFetch\",\"WebSearch\",\"mcp__claude_ai_Gmail__authenticate\",\"mcp__claude_ai_Gmail__complete_authentication\",\"mcp__claude_ai_Google_Calendar__authenticate\",\"mcp__claude_ai_Google_Calendar__complete_authentication\",\"mcp__claude_ai_Google_Drive__authenticate\",\"mcp__claude_ai_Google_Drive__complete_authentication\"],\"mcp_servers\":[{\"name\":\"claude.ai Google Calendar\",\"status\":\"needs-auth\"},{\"name\":\"claude.ai Gmail\",\"status\":\"needs-auth\"},{\"name\":\"claude.ai Google Drive\",\"status\":\"needs-auth\"}],\"model\":\"claude-haiku-4-5-20251001\",\"permissionMode\":\"default\",\"slash_commands\":[\"update-config\",\"debug\",\"simplify\",\"batch\",\"loop\",\"schedule\",\"claude-api\",\"compact\",\"context\",\"cost\",\"heapdump\",\"init\",\"review\",\"security-review\",\"extra-usage\",\"insights\",\"team-onboarding\"],\"apiKeySource\":\"none\",\"claude_code_version\":\"2.1.108\",\"output_style\":\"default\",\"agents\":[\"general-purpose\",\"statusline-setup\",\"Explore\",\"Plan\"],\"skills\":[\"update-config\",\"debug\",\"simplify\",\"batch\",\"loop\",\"schedule\",\"claude-api\"],\"plugins\":[],\"uuid\":\"779da106-2d06-4115-a8d1-907eae1ae179\",\"memory_paths\":{\"auto\":\"/Users/antony/.claude/projects/-Users-antony-Development-Mnemosyne/memory/\"},\"fast_mode_state\":\"off\"}\n">>}}
+exec got msg from port: {0,
+                         {stdout,51835,
+                                 <<"{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"resetsAt\":1776243600,\"rateLimitType\":\"seven_day\",\"utilization\":0.97,\"isUsingOverage\":false,\"surpassedThreshold\":0.75},\"uuid\":\"3b201032-21e2-4aef-ae07-9698731e2856\",\"session_id\":\"d7b96958-ed67-403d-9f08-848fd6b4a13a\"}\n">>}}
+exec got msg from port: {0,
+                         {stdout,51835,
+                                 <<"{\"type\":\"assistant\",\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_01RpQ26c5UpLE7fxukPhizXA\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"The user has given me a system reminder with instructions about my role and available skills. The instruction is to \\\"Reply with exactly one short sentence, then on a new line write: READY FOR THE NEXT PHASE\\\"\\n\\nThe system message also mentions I'm a test probe and should \\\"Reply briefly. End every response with exactly the literal string: READY FOR THE NEXT PHASE\\\"\\n\\nSo I should:\\n1. Reply with exactly one short sentence\\n2. Add a new line\\n3. Write \\\"READY FOR THE NEXT PHASE\\\"\\n\\nLet me craft a brief response acknowledging that I understand the setup.\",\"signature\":\"EugFCmMIDBgCKkBOSbTupLk+8FcAOCLkva4GRD5A+4hr7xfxKSmC7ehf3CVny1HUUf83ZoS6SCB4zBZNg7GYwz0ubZtusRmcpNLPMhljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxOAASDAUEa72pUmrAu3yCKBoMd4um/DOYHWF2+snJIjA10efhIWVkiDv1M14c3cDSOdXJ784A/lzwn+viZQEbAHJjjfdFwwpruAI33VCvt3oqsgTqcBc5sKoEnNZW0KmuON/2hdHT6DC/rzHRCv5AGyoMzUtmLiiEOyebJxuF4e3qxv5VDWrtemZpVg2DRzkJpsxzYd9uo8cp+MNF/FjSpbo+EBWqWiGocnJbyP/YQQ7dzqfiDpda6v2j9VNg6iz1D1/oPkCzc2623+LEXLKynWU0hKY2KUt11CTbW5VfLTRxEAm3sSEn1vQq2rD98935zgWw1euqmkdg4A0Rt3+57+kRKYQjjkrA0ZnvPXvr6sbaKiL538XweReyNXqwuO31SvD9fJAU57ENgI19w//aQkq4AHeHQmyTchE5Sso+E2Ly3MLo1bSM8EQhEV4Dc+dtTHDu6LZTocBWXyrRIBu7+a+quw8vfz+8y/vihtUN23A6c0ZGxk8WZb9u/66krxb9MTTNaNqBvsPhE3keJOkDCY96+hHV6aNm0ngOUdA1D/wG2Hff0pE+SzLRThmRfd7NgGu+eD0FDSsbUw296CX2r2zdw2ysYj/XSBTZalwSRMeM+d3eccyfdYw+IgQz5xpeWQSR3fgLK8oxyrRmW3CrBv8Y6glXUB63RkqcxtzCycCF2//ng49s2Ap21mJYuOqf7cXl5LHdYMbgdbhvb1oG7fcCCQhvDsv9LBCq3+a1EYemw+UlfxEve6x4AXyuRKf0x09w/dfZBaXHSO7VhuHb2jagJoeb395DhLK/u0bb7bnGhTyl9worIfcE0e2QjCo7c0ZjlGHssctc67j5oLq4/fynefnOGAE=\"}],\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":19622,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":7,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"d7b96958-ed67-403d-9f08-848fd6b4a13a\",\"uuid\":\"96b10b47-0ed0-4524-85e5-b848315cc794\"}\n">>}}
+exec got msg from port: {0,
+                         {stdout,51835,
+                                 <<"{\"type\":\"assistant\",\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_01RpQ26c5UpLE7fxukPhizXA\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"I'm ready to assist with your codebase using the lean-ctx MCP tools as instructed.\\n\\nREADY FOR THE NEXT PHASE\"}],\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":19622,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"output_tokens\":7,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"d7b96958-ed67-403d-9f08-848fd6b4a13a\",\"uuid\":\"9289db61-3d34-4645-ab3d-3fbcca1fe319\"}\n">>}}
+exec got msg from port: {1,ok}
+exec got msg from port: {0,
+                         {stdout,51835,
+                                 <<"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"duration_ms\":2824,\"duration_api_ms\":3936,\"num_turns\":1,\"result\":\"I'm ready to assist with your codebase using the lean-ctx MCP tools as instructed.\\n\\nREADY FOR THE NEXT PHASE\",\"stop_reason\":\"end_turn\",\"session_id\":\"d7b96958-ed67-403d-9f08-848fd6b4a13a\",\"total_cost_usd\":0.0032522000000000002,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":19622,\"output_tokens\":172,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":172,\"cache_read_input_tokens\":19622,\"cache_creation_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"type\":\"message\"}],\"speed\":\"standard\"},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":370,\"outputTokens\":184,\"cacheReadInputTokens\":19622,\"cacheCreationInputTokens\":0,\"webSearchRequests\":0,\"costUSD\":0.0032522000000000002,\"contextWindow\":200000,\"maxOutputTokens\":32000}},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"515f9d99-71c0-43c0-954a-9d2ebe2ecafe\"}\n">>}}
+exec got msg from port: {1,ok}
+exec got msg from port: {0,{exit_status,51835,9}}
+Pid 51835 exited with status: signaled {0,9}
+<0.212.0> 51835 got down message ({signal,sigkill,false}) (ismon=true)
+.
+Finished in 4.5 seconds (0.02s async, 4.5s sync)
+8 tests, 0 failures
+
+09:00:34.158 [error] GenServer :exec terminating
+** (stop) {:exit_status, 1}
+Last message: {#Port<0.8>, {:exit_status, 1}}
+State: {:state, #Port<0.8>, 0, {[], []}, [], :exec_mon, 0, false}
+exec: port program: "/Users/antony/Development/Mnemosyne/spikes/beam_pty/_build/test/lib/erlexec/priv/aarch64-apple-darwin25.4.0/exec-port" -debug 0 -verbose 0

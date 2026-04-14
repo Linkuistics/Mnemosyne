@@ -1,28 +1,73 @@
-### Session 9 (2026-04-14T11:48:52Z) — sub-F brainstormed; architecture pivoted to BEAM daemon
+### Session 10 (2026-04-14T23:03:06Z) — BEAM PTY spike PASS (with premise inversion)
 
-- **What was attempted:** Drive the sub-F brainstorm from its narrow original scope ("plan hierarchy + root plan") through to a committed v1 architecture, producing a design doc plus comprehensive documentation overhaul (README, architecture.md, user-guide.md, configuration.md) for sharing the vision with others.
+- **Attempted**: validate that `erlexec` can drive the real `claude` CLI over
+  a PTY with bidirectional stream-json, sentinel detection, process-group
+  termination, configurable tool profiles, and backpressure-friendly output.
+  Installed Erlang/OTP 28 + Elixir 1.19.5 via Homebrew. Scaffolded an
+  Elixir mix project at `spikes/beam_pty/` with erlexec 2.2.3 and jason.
+  Wrote a `BeamPty.Sentinel` sliding-buffer matcher (6 unit tests) and a
+  `BeamPty.ClaudeSession` thin wrapper over `:exec.run/2` (2 live probes
+  tagged `:live`).
 
-- **What worked:**
-  - F's brainstorm expanded organically from plan hierarchy to the full v1 architecture. Each user push-back drove a deeper simplification: collapsing `plans/` → `project-root/`, removing cached qualified IDs, pivoting to project-level routing agents for cross-project dispatch, recognizing experts as actors, and ultimately committing to a persistent actor daemon on BEAM.
-  - The sunk-cost analysis for BEAM commit was decisive — user's observation that "less than a day of Rust code is written and the brainstorm has taken less than a day" reframed the choice from "should we pivot?" to "when is pivoting cheapest?" — and the answer was "right now."
-  - Documentation overhaul happened in the same work phase: F design doc (~2000 lines), new README with Mermaid diagrams, new `docs/architecture.md` as the comprehensive architectural overview, rewritten user-guide and configuration docs. All four docs frame Mnemosyne as a persistent daemon orchestrator, not a knowledge-store CLI.
-  - Memory and backlog updated to reflect new architectural commitments, new sub-projects (N, O, P), and amendment tasks for every affected sibling (A, B, C, D, E, G, H, I, M).
-  - The brainstorm itself exercised the insight that a design process "keeping arriving at OTP primitives" is the universe signaling which runtime to use. Every actor-model mechanism we were about to hand-roll (supervision, mailboxes, let-it-crash, message routing, distribution transparency) is a free BEAM primitive. Committing to Elixir reduces F's implementation effort by an estimated 2-3x relative to Rust-with-actix.
+- **Worked**: 8/8 tests pass. Pipes-only erlexec configuration
+  (`[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group,
+  {:kill_timeout, 1}]`) cleanly drives claude end-to-end: `:exec.send/2`
+  delivers NDJSON to stdin, `{:stdout, ospid, binary}` messages carry each
+  stream-json event (init / rate_limit / assistant thinking / assistant
+  text / result), `{:DOWN, ospid, :process, pid, reason}` fires on exit.
+  Sentinel detector correctly finds `READY FOR THE NEXT PHASE` in claude's
+  assistant text. Process-group termination (`:kill_group` + SIGTERM +
+  500ms grace + SIGKILL) kills the grandchild of a `/bin/sh -c "sleep 60 &
+  wait"` spawn. `--disallowed-tools` passes through at the CLI flag level
+  and is visible in claude's `system/init` event.
 
-- **What didn't work / what was deferred:**
-  - Sub-F sibling plan scaffolding was **deferred** because F's implementation plan depends on the BEAM PTY spike outcome (can `erlexec` cleanly spawn Claude Code?). Rather than write a plan in a language we might not use, the brainstorm committed to the BEAM spike as the critical next step.
-  - Amendment tasks for A, B, C, D, E, G, H, I, M are written to the orchestrator backlog but not yet dispatched to the siblings' own backlogs — that's what F's own triage phase would normally do, but this work phase focused on landing the design doc + documentation overhaul, so amendment-dispatch is deferred to the next cycle.
-  - The Rust v0.1.0 CLI code is logically retired but not physically deleted. The deletion is scoped into sub-G's migration plan.
+- **Didn't work initially**: (1) `claude` on PATH resolves to a cmux
+  wrapper script that injects `--session-id` and `--settings` flags
+  incompatible with the probe — fixed by pointing at the real binary at
+  `/Users/antony/.local/bin/claude`. (2) erlexec's `:pty + :stdin`
+  combination: stdin is NOT wired to the child's real fd 0, so claude
+  reads nothing and errors with "Input must be provided either through
+  stdin or as a prompt argument when using --print". (3) DOWN message
+  format from erlexec is custom: `{:DOWN, OsPid, :process, Pid, Reason}`
+  — first element is the integer OS pid, not a monitor ref. (4) With
+  PTY, all child output arrives tagged `:stderr` rather than `:stdout`
+  because PTY slave merges both. (5) Sending `:eof` immediately after
+  the user message closed stdin before claude could read it.
 
-- **What this suggests trying next:**
-  - **BEAM PTY spike immediately.** This is the critical blocker for sub-F sibling plan scaffolding and for the whole v1 implementation path. A few hours of `erlexec` experimentation will either unblock the straightforward path or drive us to the Rust-PTY-wrapper fallback.
-  - After the spike: scaffold F's sibling plan with its Elixir-specific implementation tasks, then begin landing the amendment tasks for A/B/C/E/M so those done brainstorms are consistent with the new architecture.
-  - Sub-N (domain experts) brainstorm should come soon — F depends on ExpertActor shipping alongside PlanActor, and v1 needs a default expert set.
-  - Sub-D's much-reduced brainstorm ("daemon singleton + external-tool coordination") is a quick win that can happen in parallel with any other work.
+- **Suggests trying next**: absorb sub-C's amendment task (P1.3)
+  immediately now that the approach is validated. The amendment should:
+  (a) drop "PTY" from the stream-json path entirely; (b) specify
+  pipes-only `erlexec` opts; (c) wrap the session in a `GenServer` with
+  the NDJSON line parser and the sub-M telemetry boundary; (d) detect
+  `{"type":"result"}` as the protocol-level "turn over" signal,
+  orthogonal to the phase-prompt sentinel (task-level "done with the
+  work"); (e) describe cmux-hook noise mitigation via
+  `--setting-sources project,local --no-session-persistence`. Once
+  amended, P3.1 (sub-F sibling plan scaffolding) is also unblocked.
 
-- **Key learnings / discoveries:**
-  - **Fresh context is first-class** crystallized into a concrete architectural principle during F's brainstorm: context depth scales with decision specificity. Level 1 reasons broadly about its own plan, Level 2 reasons narrowly about one target project's code, Level 3 (if needed) reasons about one specific plan. Each level refocuses context rather than accumulating it. This is the architectural endpoint of fresh-context discipline.
-  - **Filesystem-as-invariant beats metadata-as-invariant.** Three times during the F brainstorm we caught ourselves about to cache filesystem-derivable data in frontmatter (qualified ID, host project, dev root) and each time removing the cache simplified the design. The filesystem is authoritative; metadata projections can drift; the discipline is "if it can be computed, don't store it."
-  - **Knowledge as consultative actors** rather than data stores is the key move that makes fresh-context discipline work for knowledge access. A data store serves reads; an actor serves questions. When you ask a question, the expert retrieves and synthesizes in its own fresh context, returning prose to your session. Your session never loads the expert's knowledge. This is the logical endpoint of "don't load what you can ask for."
-  - **When a design process independently arrives at an existing framework's decisions, that's the universe telling you to use that framework.** We spent significant design energy specifying things OTP gives for free: supervision, mailboxes, let-it-crash, message passing, distribution transparency. Committing to Elixir reframes all of that work as "use the primitives that already exist" rather than "build our own versions."
-  - **Mixture of experts + mixture of models falls out as an economic consequence** of the actor model, not as a feature bolted on. Expert actors are narrow-scoped consultation tasks that often don't need Opus-class models. Per-actor model selection turns this into a first-class capability. Team mode similarly falls out as a transport change, not an architectural change — actors are already message-passing entities; making them cross-machine is one more implementation of the same primitive.
+- **Key learnings / discoveries**:
+  - **The PTY premise was wrong.** Sub-C's stream-json path is stdio
+    NDJSON, not a terminal. A PTY is only needed if sub-C ever wants to
+    drive claude's interactive TUI (slash commands, arrow keys, ANSI
+    redraws), which the memory invariant "no slash commands in the
+    harness — control forbidden, observation required" explicitly rules
+    out. This is a meaningful simplification for sub-C.
+  - **erlexec uses a C++ port program**, not a NIF. `exec-port` is
+    spawned as a separate OS process that handles PTY allocation,
+    signals, and process groups without blocking BEAM schedulers. This
+    is why erlexec can safely use `ptrace`, `setreuid`, and process
+    groups.
+  - **`:stdin` bare atom is required** if you want `:exec.send/2` to
+    work. erlexec defaults stdin to `:null` (cat echo test exited with
+    status 0 immediately otherwise).
+  - **cmux SessionStart hooks pollute stream-json output**. Any claude
+    invocation triggers ~10KB of hook JSON from user-global settings.
+    `--setting-sources project,local` silences them cleanly.
+  - **Sentinel sliding-buffer invariant**: window retained between
+    feeds is exactly `sentinel_size - 1` bytes. Verified empirically
+    after feeding 10KB of non-matching data (buffer stays at 23 bytes
+    for the 24-byte sentinel). This is load-bearing for long-running
+    phase sessions that may emit MB of assistant text.
+  - **`{"type":"result"}`** is the protocol-level turn-over marker —
+    complementary to the phase-prompt sentinel for task-level done.
+    Sub-C should detect both.

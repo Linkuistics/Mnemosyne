@@ -1,0 +1,49 @@
+Compiling 1 file (.ex)
+Generated beam_pty app
+exec: port program: "/Users/antony/Development/Mnemosyne/spikes/beam_pty/_build/test/lib/erlexec/priv/aarch64-apple-darwin25.4.0/exec-port" -debug 0 -verbose 0
+Running ExUnit with seed: 849821, max_cases: 20
+Excluding tags: [:test]
+Including tags: [:live]
+
+exec got msg from port: {1,{pid,50858}}
+exec added monitor <0.216.0> for OsPid 50858exec got msg from port: {0,{stdout,50858,<<"CHILD_PID=50859\n">>}}
+exec got msg from port: {1,ok}
+exec got msg from port: {0,{exit_status,50858,15}}
+Pid 50858 exited with status: signaled {0,15}
+<0.216.0> 50858 got down message ({signal,sigterm,false}) (ismon=true)
+
+08:59:55.905 [error] GenServer :exec terminating
+** (stop) {:exit_status, 1}
+Last message: {#Port<0.10>, {:exit_status, 1}}
+State: {:state, #Port<0.10>, 0, {[], []}, [], :exec_mon, 0, false}
+exec: port program: "/Users/antony/Development/Mnemosyne/spikes/beam_pty/_build/test/lib/erlexec/priv/aarch64-apple-darwin25.4.0/exec-port" -debug 0 -verbose 0
+.exec got msg from port: {1,{pid,50864}}
+exec added monitor <0.219.0> for OsPid 50864exec got msg from port: {0,
+                         {stdout,50864,
+                                 <<"{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/Users/antony/Development/Mnemosyne/spikes/beam_pty\",\"session_id\":\"b2454571-ccbd-4f60-9c7b-4ece30002a27\",\"tools\":[\"Task\",\"AskUserQuestion\",\"CronCreate\",\"CronDelete\",\"CronList\",\"EnterPlanMode\",\"EnterWorktree\",\"ExitPlanMode\",\"ExitWorktree\",\"Glob\",\"Grep\",\"Monitor\",\"NotebookEdit\",\"RemoteTrigger\",\"ScheduleWakeup\",\"Skill\",\"TaskOutput\",\"TaskStop\",\"TodoWrite\",\"ToolSearch\",\"WebFetch\",\"WebSearch\",\"mcp__claude_ai_Gmail__authenticate\",\"mcp__claude_ai_Gmail__complete_authentication\",\"mcp__claude_ai_Google_Calendar__authenticate\",\"mcp__claude_ai_Google_Calendar__complete_authentication\",\"mcp__claude_ai_Google_Drive__authenticate\",\"mcp__claude_ai_Google_Drive__complete_authentication\"],\"mcp_servers\":[{\"name\":\"claude.ai Google Calendar\",\"status\":\"needs-auth\"},{\"name\":\"claude.ai Gmail\",\"status\":\"needs-auth\"},{\"name\":\"claude.ai Google Drive\",\"status\":\"needs-auth\"}],\"model\":\"claude-haiku-4-5-20251001\",\"permissionMode\":\"default\",\"slash_commands\":[\"update-config\",\"debug\",\"simplify\",\"batch\",\"loop\",\"schedule\",\"claude-api\",\"compact\",\"context\",\"cost\",\"heapdump\",\"init\",\"review\",\"security-review\",\"extra-usage\",\"insights\",\"team-onboarding\"],\"apiKeySource\":\"none\",\"claude_code_version\":\"2.1.108\",\"output_style\":\"default\",\"agents\":[\"general-purpose\",\"statusline-setup\",\"Explore\",\"Plan\"],\"skills\":[\"update-config\",\"debug\",\"simplify\",\"batch\",\"loop\",\"schedule\",\"claude-api\"],\"plugins\":[],\"uuid\":\"8ab5d6fb-c1cf-4b0c-91ca-033efa4f0467\",\"memory_paths\":{\"auto\":\"/Users/antony/.claude/projects/-Users-antony-Development-Mnemosyne/memory/\"},\"fast_mode_state\":\"off\"}\n">>}}
+exec got msg from port: {0,
+                         {stdout,50864,
+                                 <<"{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"resetsAt\":1776243600,\"rateLimitType\":\"seven_day\",\"utilization\":0.97,\"isUsingOverage\":false,\"surpassedThreshold\":0.75},\"uuid\":\"481d6ee2-0982-4682-afd6-345eafd981e3\",\"session_id\":\"b2454571-ccbd-4f60-9c7b-4ece30002a27\"}\n">>}}
+exec got msg from port: {0,
+                         {stdout,50864,
+                                 <<"{\"type\":\"assistant\",\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_019HLwRf4WrvPTMMQ6N6Rx4n\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"The user is asking me to be a test probe and reply briefly, ending every response with the literal string \\\"READY FOR THE NEXT PHASE\\\".\\n\\nThe system reminder mentions CLAUDE.md instructions that mandate using lean-ctx MCP tools for reads and searches, but I don't see those tools available in my function list. This seems like test setup.\\n\\nThe user wants:\\n1. A brief reply (one short sentence)\\n2. Then on a new line: \\\"READY FOR THE NEXT PHASE\\\"\\n\\nLet me provide a simple, brief response acknowledging I'm ready.\",\"signature\":\"EsAFCmMIDBgCKkAKvz756wnX7KQdad4hnTQETQIujjUHnTtTgfbDLqxY3ElhlwbBrnQiSJkHwR94ZG0fa+TDeYv4SIZlK3ZlBn7jMhljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxOAASDKdF5j1I6Z/6xEk1XBoMu+pVkgkrb3XMKDVcIjCXRry9KmCmKOb8/bDRqgdvHMyEERuGXGLWd4e3W2qCl6pNrV52sd8xraRYEO9FGasqigR6BqkMQs56LHproLRDyUhHVZHAHnBynSY8RXuIzdrv9mWRd8ZMyN+gPjt8+iP2kLhezp+ICYVUr5G/vAUS8Kt87+90zXNZJ08bgMHsTTOTCuREuH99CvNtg0eun8/WQPiqOhD2/9FRDlDsKExlj02QufEknmasy9HA+ejy43KjIeDxHB+mAqgnoKJ9mtJZNwKduVYMtlGI7eyP7VmmXMgfd3oC04hlICaEYnure+sDnud+WKXIvrZxiaRI2KintNszV/Wq854dRXdVhkoxmKXwqO/ehfJG4sU+pNdINd1BuMRuVG8lhOvgCToYcTxbqOGwpUvYMLIQ9GtQ4eaPl+XCxKlVVrkpY4BD5WXn4yb7Q5gQrbRq8NMf5hOO9Nuy0CIV94vJEuXqchGunh/w7lYgkZ9UwXl5C5gbWcQZCqfh8k4vPOHT/cBBvnFgeazAZq5RoKBpt4NTfjWxXON5BWYk1cfluGbdoLAOKUipKjBwfm/P1sClxZl3PHI6x4vboM3QyFzxgzxR8pv1d0jD9PKDPQhZdr1xUkEJXrwjk1SAgkZgoWJb0pWoXlzoz/pcl0TKvsJECWT1XRyaw/DdCaYLeZ5MQJwM3qOF0wdjGb6Gaccuu4TRmz/PaKQ3u87R2utluFl+cQ8QgxvPo5368lNd0zLUwebgEPnr9sE4uWDm/1vsRUfjvBnvccsYAQ==\"}],\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":19622,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":19622},\"output_tokens\":7,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"b2454571-ccbd-4f60-9c7b-4ece30002a27\",\"uuid\":\"20bcaecc-ac09-4909-9a57-ed4499b053e4\"}\n">>}}
+exec got msg from port: {0,
+                         {stdout,50864,
+                                 <<"{\"type\":\"assistant\",\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_019HLwRf4WrvPTMMQ6N6Rx4n\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"I'm ready to proceed as a test probe.\\n\\nREADY FOR THE NEXT PHASE\"}],\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":19622,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":19622},\"output_tokens\":7,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"b2454571-ccbd-4f60-9c7b-4ece30002a27\",\"uuid\":\"7b2fec98-b544-45cb-9198-4296fb4398ad\"}\n">>}}
+exec got msg from port: {1,ok}
+exec got msg from port: {0,
+                         {stdout,50864,
+                                 <<"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"duration_ms\":2618,\"duration_api_ms\":3636,\"num_turns\":1,\"result\":\"I'm ready to proceed as a test probe.\\n\\nREADY FOR THE NEXT PHASE\",\"stop_reason\":\"end_turn\",\"session_id\":\"b2454571-ccbd-4f60-9c7b-4ece30002a27\",\"total_cost_usd\":0.0257375,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":19622,\"cache_read_input_tokens\":0,\"output_tokens\":154,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":19622,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":154,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":19622,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":19622},\"type\":\"message\"}],\"speed\":\"standard\"},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":370,\"outputTokens\":168,\"cacheReadInputTokens\":0,\"cacheCreationInputTokens\":19622,\"webSearchRequests\":0,\"costUSD\":0.0257375,\"contextWindow\":200000,\"maxOutputTokens\":32000}},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"uuid\":\"8601dcf1-ff76-441f-8dcb-111644f2b6e7\"}\n">>}}
+exec got msg from port: {1,ok}
+exec got msg from port: {0,{exit_status,50864,9}}
+Pid 50864 exited with status: signaled {0,9}
+<0.219.0> 50864 got down message ({signal,sigkill,false}) (ismon=true)
+.
+Finished in 4.5 seconds (0.01s async, 4.5s sync)
+2 tests, 0 failures (6 excluded)
+
+09:00:00.418 [error] GenServer :exec terminating
+** (stop) {:exit_status, 1}
+Last message: {#Port<0.13>, {:exit_status, 1}}
+State: {:state, #Port<0.13>, 0, {[], []}, [], :exec_mon, 0, false}
+exec: port program: "/Users/antony/Development/Mnemosyne/spikes/beam_pty/_build/test/lib/erlexec/priv/aarch64-apple-darwin25.4.0/exec-port" -debug 0 -verbose 0
