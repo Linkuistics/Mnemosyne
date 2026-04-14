@@ -3,10 +3,10 @@
 Implementation backlog for sub-project C. All tasks derive from the design
 doc at
 `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
-(committed at `71fd307`, amended at `b1a8cea`, **BEAM pivot amendment
-§12 landed 2026-04-15**). Consult the spec before starting any task —
-**§12 is the authoritative Elixir/BEAM projection** and supersedes every
-Rust-specific implementation detail in §2–§8 wherever they conflict.
+(original Session 6 brainstorm 2026-04-13; **rewritten inline for the
+BEAM/Elixir pivot + BEAM PTY spike findings 2026-04-15**). Consult the
+spec before starting any task — the full doc is now Elixir-native; Session 6
+material survives only as historical decisions in Appendix A.
 
 Tasks are listed in approximately recommended order, following the
 implementation strategy in `{{PLAN}}/memory.md`: setup → day-1 verification
@@ -14,14 +14,19 @@ implementation strategy in `{{PLAN}}/memory.md`: setup → day-1 verification
 instrumentation → tests → dogfood acceptance gate → conditional warm-pool.
 The work phase picks the best next task with input from the user.
 
-## ✅ BEAM PTY spike resolved + design doc §12 amendment landed — backlog rewrite required
+## ✅ BEAM PTY spike resolved + design doc rewritten — backlog rewrite required
 
 The BEAM PTY spike (Session 10, 2026-04-15) validated that pipes-only
-`erlexec` works perfectly for driving Claude Code's stream-json protocol.
-The design doc §12 amendment (Session 11, 2026-04-15) projects every
-Rust-specific element onto Elixir/OTP and is the starting point for the
-rewritten backlog below. **The spike is no longer blocking, and the design
-doc now matches the committed runtime.** Key findings from the spike:
+`erlexec` drives Claude Code's stream-json protocol cleanly. The design
+doc was rewritten inline at Session 11 (2026-04-15) to reflect the BEAM
+pivot and the spike findings — §1–§11 now specify Elixir/OTP, Appendix A
+records both original Session 6 decisions and the new Q6–Q8 entries
+(BEAM pivot, BEAM PTY spike, tool-call boundary), and Appendix B
+replaces the Cargo.toml diff with a mix.exs projection. **The spike is
+no longer blocking, the design doc is now Elixir-native end to end, and
+this Rust-specific task list below must be rewritten to match the new
+spec.** Key findings from the spike, preserved here for backlog-rewrite
+context:
 
 1. **PTY premise was wrong** — `claude -p --input-format stream-json
    --output-format stream-json` is pure NDJSON over stdio; no

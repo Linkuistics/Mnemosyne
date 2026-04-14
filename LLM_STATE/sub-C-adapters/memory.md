@@ -263,21 +263,41 @@ before implementation begins. The task *sequence* (types → fixture replay
 profiles, process-group termination, cold-spawn latency gate, fixture
 replay parity) remain valid; only the implementation technology changes.
 
-**Design doc §12 amendment landed (Session 11, 2026-04-15).** The
-authoritative Elixir/BEAM projection now lives at
-`{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
-§12. It covers: the supersession table (§12.1), what survives verbatim
-(§12.2), the normative `:exec.run/2` spawn path (§12.3), the two
-protocol signals (protocol-level `turn_complete:<subtype>` vs task-level
-sentinel) (§12.4), the new **tool-call boundary for in-session Queries**
-(§12.5 — F-introduced contract C must satisfy), the `:telemetry` +
-typed-struct observability re-cast (§12.6), multi-adapter reservation
-to sub-O (§12.7), the dependency footprint (`erlexec` + `jason`, no
-PTY lib, §12.8), resolved and new open questions (§12.9 — Q3/Q4
-resolved by the spike, Q6/Q7 newly surfaced), backlog rewrite guidance
-(§12.10), cross-sub-project impact (§12.11), and an evolution log
-(§12.12). **§12 is the starting point for the rewritten task list in
-`backlog.md`.**
+**Design doc rewritten for the pivot (Session 11, 2026-04-15).** Rather
+than layering a supersede-amendment on top of the Rust brainstorm, the
+spec was **rewritten inline across §1–§11** with fresh Elixir/OTP
+content. The original Session 6 decisions survive only in Appendix A
+(as Q1–Q5, with spike corrections), and new Appendix A entries Q6–Q8
+record the BEAM pivot, the BEAM PTY spike findings, and the tool-call
+boundary contract. The rewrite covers: Elixir-native scope (§1), the
+GenServer + DynamicSupervisor architecture with module layout and
+supervision tree placement (§2), the `@behaviour Mnemosyne.HarnessAdapter`
+surface and the `Mnemosyne.Event.*` sealed typed-struct set (§3), the
+full ClaudeCode adapter with the normative `:exec.run/2` spawn path,
+cmux mitigation flags, session GenServer state and message set,
+stream-json parser locked against spike samples, two-phase SIGTERM→SIGKILL
+termination, **tool-call boundary for in-session Queries** (new §4.5:
+injected tool set `ask_expert`/`dispatch_to_plan`/`read_vault_catalog`,
+three candidate injection mechanisms, intercept flow via
+`Mnemosyne.Router.handle_tool_call/4`, why-not-control-channel), and
+the `CrashedBeforeReady` heuristic and error-reason table (§4.6). §5
+re-casts FixtureReplay as a GenServer walking JSON-Lines records via
+`Process.send_after/3`. §6-§8 preserve tool-profile enforcement,
+cold-spawn / C-1 gate, and a three-layer ExUnit testing strategy. §9
+Risks adds exec-port loss and tool-call-boundary injection brittleness;
+§10 marks Q3/Q4 **resolved by the spike**, keeps Q1/Q2/Q5, and adds Q6
+(tool-call boundary mechanism — day-1 spike) and Q7 (exec-port
+supervision — resolved as design decision). §11 drops Rust-specific
+amendments 1-3 back to B (no BEAM analogue) and keeps the consumed
+`%SessionLifecycle{}` event plus the sentinel-matcher executor
+requirement. Appendix B replaces the Cargo.toml diff with an `mix.exs`
+projection — one new Hex dep (`erlexec`). **The rewritten spec is the
+starting point for the rewritten task list in `backlog.md`.**
+
+**Pattern note**: the user explicitly prefers pivot-induced inline
+rewrites over supersede-layer amendments. Recorded as durable feedback
+memory. Applies to all remaining amendment tasks in the orchestrator
+backlog (sub-A, sub-B, sub-D, sub-E, sub-M, sub-G, sub-H, sub-I).
 
 ## Open questions (implementation-level)
 
