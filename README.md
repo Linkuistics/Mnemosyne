@@ -337,7 +337,7 @@ The comprehensive architectural overview is in [`docs/architecture.md`](docs/arc
 
 ## Relationship to LLM_CONTEXT
 
-Mnemosyne is the successor to **LLM_CONTEXT**, the earlier Linkuistics project that ships the four-phase work cycle (work → reflect → compact → triage), the phase-file-factored plan layout, and the `run-plan.sh` driver that Mnemosyne's persistent-daemon architecture absorbs and extends. LLM_CONTEXT continues to ship unchanged until Mnemosyne v1 is demonstrably equivalent or better; the migration lands in sub-G. Until then, bootstrap discipline applies: this plan and all sub-project plans run on LLM_CONTEXT's machinery, not on Mnemosyne's own.
+Mnemosyne is the successor to **[LLM_CONTEXT](https://github.com/Linkuistics/LLM_CONTEXT)**, the earlier Linkuistics project that ships the four-phase work cycle (work → reflect → compact → triage), the phase-file-factored plan layout, and the `run-plan.sh` driver that Mnemosyne's persistent-daemon architecture absorbs and extends. LLM_CONTEXT continues to ship unchanged until Mnemosyne v1 is demonstrably equivalent or better; the migration lands in sub-G. Until then, bootstrap discipline applies: this plan and all sub-project plans run on LLM_CONTEXT's machinery, not on Mnemosyne's own.
 
 ## License
 
