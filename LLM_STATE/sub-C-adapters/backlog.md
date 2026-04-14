@@ -3,29 +3,48 @@
 Implementation backlog for sub-project C. All tasks derive from the design
 doc at
 `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
-(committed at `71fd307`, amended at `b1a8cea`). Consult the spec before
-starting any task.
+(committed at `71fd307`, amended at `b1a8cea`, **BEAM pivot amendment
+§12 landed 2026-04-15**). Consult the spec before starting any task —
+**§12 is the authoritative Elixir/BEAM projection** and supersedes every
+Rust-specific implementation detail in §2–§8 wherever they conflict.
 
 Tasks are listed in approximately recommended order, following the
 implementation strategy in `{{PLAN}}/memory.md`: setup → day-1 verification
-→ FixtureReplay → ClaudeCode wire layer → actor architecture → lifecycle →
+→ FixtureReplay → ClaudeCode wire layer → GenServer wiring → lifecycle →
 instrumentation → tests → dogfood acceptance gate → conditional warm-pool.
 The work phase picks the best next task with input from the user.
 
-## ⛔ Backlog frozen — BEAM PTY spike required
+## ✅ BEAM PTY spike resolved + design doc §12 amendment landed — backlog rewrite required
 
-All tasks below are written against Rust (Cargo.toml, `src/harness/`,
-crossbeam-channel, nix, `std::process::Command`). The orchestrator's
-Session 9 committed Mnemosyne to a persistent BEAM daemon (Elixir/OTP).
-Sub-C's amendment — Elixir implementation via `erlexec`, OTP GenServer
-supervision replacing actor threading, `HarnessSpawner` as Elixir
-behaviour — is **blocked on the BEAM PTY spike (Priority 0)**. That spike
-validates whether `erlexec` can cleanly spawn Claude Code with PTY I/O,
-stream-json, sentinel detection, and process-group termination.
+The BEAM PTY spike (Session 10, 2026-04-15) validated that pipes-only
+`erlexec` works perfectly for driving Claude Code's stream-json protocol.
+The design doc §12 amendment (Session 11, 2026-04-15) projects every
+Rust-specific element onto Elixir/OTP and is the starting point for the
+rewritten backlog below. **The spike is no longer blocking, and the design
+doc now matches the committed runtime.** Key findings from the spike:
 
-**Do not start any task below until the BEAM PTY spike resolves.** Once it
-does, this backlog must be rewritten for Elixir/OTP (the task sequence and
-design intent remain valid; only the implementation technology changes).
+1. **PTY premise was wrong** — `claude -p --input-format stream-json
+   --output-format stream-json` is pure NDJSON over stdio; no
+   pseudo-terminal needed.
+2. **erlexec pipes-only works** — use `[:monitor, :stdin, {:stdout,
+   self()}, {:stderr, self()}, :kill_group]`; the `:pty + :stdin`
+   combination does NOT wire the caller's pipe to the child's real stdin.
+3. Sentinel sliding-buffer detection validated.
+4. Process-group termination validated.
+5. cmux SessionStart hooks inject ~10KB of spurious JSON — silenced with
+   `--setting-sources project,local --no-session-persistence`.
+6. erlexec is a C++ port program (not a NIF), so no BEAM scheduler risks.
+7. `{"type":"result"}` is protocol-level "turn over", orthogonal to
+   task-level sentinel.
+8. The Rust PTY-wrapper fallback is unnecessary.
+
+Spike code at `spikes/beam_pty/`.
+
+**All tasks below are still written against the Rust implementation
+assumption** (Cargo.toml, `src/harness/`, crossbeam-channel, nix,
+`std::process::Command`). They must be rewritten for Elixir/OTP before
+implementation begins. The task *sequence* and *design intent* remain
+valid; only the implementation technology changes.
 
 See `memory.md` § "BEAM / Elixir pivot (Session 9 amendment)" for full
 context.

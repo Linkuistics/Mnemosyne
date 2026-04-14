@@ -1,20 +1,30 @@
 ---
 title: Sub-project C — Harness Adapter Layer Design
-status: brainstorm-complete
+status: brainstorm-complete (amended 2026-04-15 — BEAM/Elixir pivot)
 date: 2026-04-13
-author: brainstorm Session 6
+amended: 2026-04-15
+author: brainstorm Session 6; amendment Session 11
 parent-plan: mnemosyne-orchestrator
 sibling-plan: sub-C-adapters
 depends-on:
   - sub-B-phase-cycle (brainstorm done 2026-04-12)
   - sub-E-ingestion (brainstorm done 2026-04-12)
+  - mnemosyne-orchestrator BEAM PTY spike (done 2026-04-15)
 unblocks:
   - sub-B-phase-cycle (v1 dogfood acceptance test)
+  - sub-F-hierarchy (sibling plan scaffolding)
 amendments-to:
   - sub-B-phase-cycle (four additive HarnessSession trait amendments + one executor requirement — see §11.1)
+amended-by:
+  - sub-F-hierarchy (BEAM daemon commitment, actor types, tool-call boundary for Queries — see §12)
+  - mnemosyne-orchestrator BEAM PTY spike (pipes-only erlexec validated, PTY premise inverted — see §12)
 new-sub-projects-surfaced:
-  - sub-M-observability (forward pointer — see §11.5)
+  - sub-M-observability (forward pointer — see §11.5; re-cast under §12.6)
+reserves-for:
+  - sub-O-model-mixing (multi-adapter support — see §12.7)
 ---
+
+> **AMENDMENT NOTICE (2026-04-15):** This design was brainstormed before sub-F committed Mnemosyne to a persistent BEAM daemon and before the BEAM PTY spike inverted the PTY premise. **§12 is authoritative wherever it contradicts earlier sections.** Sections written against Rust (`src/harness/`, `crossbeam-channel`, `nix`/`killpg`, `std::process::Command`, `Arc<dyn HarnessSession>`, three-threads-per-session) are **superseded**; their *design intent* (typed messages, single-owner-per-state, process-group termination, defence-in-depth tool profiles, fixture replay parity, cold-spawn latency gate, C-1 acceptance test) **survives** and re-projects onto Elixir/OTP. Read §12 first, then read the earlier sections for surviving design intent.
 
 ## Overview
 
@@ -37,7 +47,8 @@ C is on the critical path for B's v1 dogfood acceptance test: B's `LlmHarnessExe
 9. [Risks](#9-risks)
 10. [Open implementation questions](#10-open-implementation-questions)
 11. [Cross-sub-project requirements](#11-cross-sub-project-requirements)
-12. [Appendix A — Decision Trail](#appendix-a--decision-trail)
+12. [Amendment — BEAM/Elixir Pivot (2026-04-15)](#12-amendment--beamelixir-pivot-2026-04-15)
+13. [Appendix A — Decision Trail](#appendix-a--decision-trail)
 
 ---
 
@@ -1198,6 +1209,195 @@ C's `SpawnLatencyReport` (§7.2) is **a tactical instrumentation specific to the
 - C's actor architecture and error variants are **observability-friendly** — every state transition is a typed message, every error is a typed variant — so retrofitting structured logging onto C will be additive (`tracing::instrument` annotations on actor handlers, `tracing::event!` on error paths) rather than requiring redesign.
 
 Sub-M will be added to `mnemosyne-orchestrator/backlog.md` as a new brainstorm candidate alongside C's task results.
+
+---
+
+## 12. Amendment — BEAM/Elixir Pivot (2026-04-15)
+
+This amendment reflects two events that post-date Session 6's brainstorm and supersede every Rust-specific implementation detail in §2-§8:
+
+1. **Sub-F's architectural commitment (Session 9, 2026-04-14).** Mnemosyne is a persistent BEAM daemon (Elixir/OTP). Two sealed actor types (`PlanActor`, `ExpertActor`) and two message types (`Dispatch`, `Query`) replace the per-invocation Rust CLI framing. The entire harness adapter layer runs inside a long-lived BEAM node under OTP supervision.
+2. **The BEAM PTY spike (Session 10, 2026-04-15).** A focused spike at `spikes/beam_pty/` validated driving the real `claude` CLI from Elixir using `erlexec`. 8/8 tests green. The spike inverted C's process-model premise: **stream-json is pure NDJSON over stdio — no pseudo-terminal is needed, and in fact a PTY actively breaks the input path.** See `spikes/beam_pty/README.md` for full findings.
+
+Both events together rewrite C's *implementation stack* while leaving C's *design intent* essentially intact. Read this section alongside §3-§8, treating §12 as a translation layer from Rust to Elixir.
+
+### 12.1 What is superseded, at a glance
+
+| Earlier section | Superseded element | Replacement |
+|---|---|---|
+| §2.2, §2.3, Appendix B | Rust single-crate, `src/harness/` module tree, Cargo.toml deps (`which`, `nix`, `crossbeam-channel`) | Elixir umbrella app or top-level module under the Mnemosyne BEAM application; `erlexec` (Hex) plus standard OTP |
+| §2.4, §4.2 | Three threads per session (actor + stdout-reader + stderr-reader); `crossbeam_channel` inboxes | One OTP `GenServer` per session, supervised under a `DynamicSupervisor`; `erlexec` delivers `{:stdout, ospid, _}` / `{:stderr, ospid, _}` / `{:DOWN, _, _, _, _}` messages directly to the GenServer's mailbox |
+| §3.1 Rust trait surface (`HarnessAdapter`, `HarnessSession`, `Arc<dyn HarnessSession>`, `&self + Send + Sync`) | Rust traits | An Elixir `@behaviour Mnemosyne.HarnessAdapter` (spawn contract) and a `Mnemosyne.HarnessSession` module encapsulating the GenServer handle. GenServer PIDs are already `Send`-equivalent on BEAM; no trait-object gymnastics required. |
+| §4.1 `std::process::Command` spawn, `process_group(0)` | POSIX process-group via Rust | `:exec.run/2` with `[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group, {:kill_timeout, 1}]`. `:kill_group` gives process-group teardown; `:stdin` (bare atom) is mandatory to wire stdin — erlexec defaults to `:null` otherwise. |
+| §4.1.2 `input.rs` `serialise_user_message` | Rust JSON helper | Elixir `Jason.encode!/1` of the user-message envelope; delivered via `:exec.send(ospid, json_line <> "\n")`. |
+| §4.2.4 actor loop with `crossbeam_channel::select!` | Rust custom-threaded actor | GenServer `handle_info/2` clauses — one per erlexec message kind plus one per client command. `:telemetry.span/3` wraps per-message handlers (see §12.6). |
+| §4.3 stream-json parser as Rust `serde` structs | Rust serde | A thin Elixir `Mnemosyne.HarnessAdapter.ClaudeCode.StreamJson` module that parses each NDJSON line with `Jason.decode!/1` and dispatches pattern-matched event maps to typed `Mnemosyne.Event.*` structs (see §12.6). |
+| §4.4 `nix::sys::signal::killpg` two-phase SIGTERM→SIGKILL | Rust `nix` crate | `:exec.kill(ospid, 15)` → 500 ms grace → `:exec.kill(ospid, 9)`. The `:kill_group` option is what makes the group-wide kill actually reach the grandchildren. Verified by the spike against a `/bin/sh -c "sleep 60 & wait"` probe. |
+| §4.5.1 `CrashedBeforeReady` heuristic (2s / 0 chunks / non-zero exit) | Rust data flow | Implemented inside the GenServer: a `:first_chunk_received` flag plus a `Process.send_after(self(), :spawn_grace_expired, 2_000)` timer; if the timer fires and no chunks have been seen and the `{:DOWN, ...}` has arrived with non-zero reason, the session terminates with `{:error, :crashed_before_ready}`. |
+| §5 `FixtureReplayAdapter` as a mirror of Rust threading | Parallel Rust implementation | Fixture replay ships as a second `@behaviour` impl — a GenServer that walks a JSON-Lines fixture, sending `{:stdout, ...}`-shaped messages to itself on a `Process.send_after/3` schedule. The JSON-Lines format survives unchanged; the actor *architecture* parity (same event loop, same defence-in-depth, same lifecycle transitions) is what justified mirroring in Rust and still justifies it in Elixir. |
+| §6 tool profile enforcement via `ToolProfile` enum | Rust enum | An Elixir `@type tool_profile :: :ingestion_minimal \| :research_broad` with a `tool_profile_to_args/1` pure function. The defence-in-depth check lives in the GenServer's `handle_info({:stdout, _, line}, state)` clause, just like it did in the Rust actor. |
+| §7.2 `SpawnLatencyReport` written to `<staging>/spawn-latency.json` | Tactical Rust writer | Preserved for the C-1 gate. Writer is now an Elixir module emitting the same JSON file path. **It remains a tactical seed subject to sub-M's parallel-emit migration** (see §12.6). The spike proved timestamps can be taken at `:exec.run/2` return, at first `{:stdout, ...}`, and at the `system/init` NDJSON line. |
+| §8.3 Layer 3 live tests behind `MNEMOSYNE_TEST_LIVE_HARNESS=1` | Rust env-var gate | `ExUnit` tag `:live` + `@moduletag :live`. Run with `mix test --only live`. The spike's `test/claude_session_test.exs` is the template. |
+| §11.1 trait amendments back to B (Rust `&self` / `Arc<dyn>` / `Send + Sync`) | Rust trait-object plumbing | **Dropped as Rust-specific.** The underlying requirements survive: B's executor must be able to stream output and inject user messages *concurrently* against a running session. On BEAM that is just two client processes both sending messages to the session GenServer — no trait-object concerns exist. The `SessionLifecycle` chunk variant (amendment 4) survives unchanged as a typed `Mnemosyne.Event.HarnessOutput` subtype. The sentinel-matching executor requirement (5) survives unchanged — still lives in B's executor, still uses a sliding buffer, still sized to the longest expected sentinel. |
+
+### 12.2 What survives, at a glance
+
+The following decisions are **re-stated verbatim** as binding constraints on the Elixir implementation:
+
+- **Bidirectional NDJSON over stdio** (§4.1, Appendix A Q1). The chosen path survives, stripped of its PTY misconception. `claude --print --input-format stream-json --output-format stream-json --verbose` is the v1 invocation.
+- **Defence-in-depth tool enforcement** (§6). Spawn-time `--disallowed-tools` / `--allowed-tools` flags + stream-side `handle_info` check on every `tool_use` block. An `IngestionMinimal` session that sees a `tool_use` event kills itself with `{:error, :unsupported_tool_profile}`. The spike confirms `--disallowed-tools` passes through to the `system/init` event's `tools` array and is honoured by the CLI.
+- **Process-group termination from v1** (§4.4). Non-negotiable. No orphaned MCP subprocesses, no leaked grandchildren. Validated in the spike via a `/bin/sh -c "sleep 60 & wait"` grandchild probe.
+- **Cold-spawn-only in v1, warm-pool gated by C-1** (§7.3). The p95 < 5 s gate over N≥10 dogfood cycles survives unchanged. The §7.4 three-check reset spike and the §7.5 warm-pool sketch survive as conditional-on-trip work. The reset mechanism is now "send a control envelope / `/clear`-as-user-message / degraded single-use" within the bounds of what erlexec's pipes-only mode can drive.
+- **Fixture replay parity with the live adapter** (§5). The fixture replay GenServer exercises the *same* event-handling code path as the live GenServer for every assertion that does not require a real `claude` process. Threading correctness regressions surface in CI without a claude dep.
+- **`SessionLifecycle` chunk variant** (§11.1 amendment 4 to B). Survives as the canonical mechanism for surfacing protocol-level harness state transitions (`"ready"`, `"turn_complete:<subtype>"`, `"exited:<exit_status>"`). Still consumed by B's phase-cycle state machine.
+- **Task-level sentinel detection in B's executor** (§11.1 executor requirement 5). Still lives in B. Still harness-agnostic. Still uses a sliding buffer. The spike validated the exact matcher (6 unit tests, single-chunk / two-chunk / grapheme-drip / false-prefix / false-overlap / bounded-window).
+- **Hard errors by default** (§1.3 goal 2). Every unexpected condition in the GenServer is an explicit `{:error, reason}` return that the supervisor observes; the `:telemetry` boundary records the error before the GenServer terminates.
+- **The C-1 dogfood acceptance test is still the swap-in moment for B** (§7.3). The test still runs the orchestrator's full work → reflect → triage cycle N≥10 times with the real adapter replacing any stub. The test still walks every staging directory and computes p95 cold-spawn latency. The only thing that changes is the language.
+
+### 12.3 The Elixir wire model (normative)
+
+The v1 spawn path is:
+
+```elixir
+defmodule Mnemosyne.HarnessAdapter.ClaudeCode do
+  @behaviour Mnemosyne.HarnessAdapter
+
+  @impl true
+  def spawn(%{prompt: prompt, tool_profile: profile, working_dir: cwd, session_id: sid}) do
+    argv =
+      [claude_binary_path()] ++
+        base_args(sid) ++
+        tool_profile_to_args(profile) ++
+        cmux_mitigation_args()
+
+    exec_opts = [
+      :monitor,
+      :stdin,                        # mandatory — defaults to :null otherwise
+      {:stdout, self()},
+      {:stderr, self()},
+      :kill_group,
+      {:kill_timeout, 1},
+      {:cd, to_charlist(cwd)}
+    ]
+
+    {:ok, _pid, ospid} = :exec.run(argv, exec_opts)
+    # GenServer state captures ospid, spawned_at, sentinel_buffer, tool_profile,
+    # session_id, staging_dir, :first_chunk_received flag, etc.
+    # Initial user message envelope is delivered via :exec.send/2 from :continue.
+  end
+end
+```
+
+The cmux mitigation args are mandatory for all daemon-spawned sessions:
+
+```elixir
+defp cmux_mitigation_args do
+  ["--setting-sources", "project,local", "--no-session-persistence"]
+end
+```
+
+These suppress the ~10 KB of user-global cmux SessionStart hook JSON that would otherwise appear before the first assistant event on every spawn. Documented in `memory.md` and in the spike README.
+
+### 12.4 The two protocol signals
+
+The spike clarified an ambiguity in the original §4.3.3: **there are two distinct "the session is done" signals**, and C's adapter surfaces both.
+
+1. **Protocol-level turn-over** — the `{"type":"result", "subtype": ...}` NDJSON event. Fires when the model stops emitting tokens for the current turn. This is Claude Code's own "I am finished producing output for this turn" signal. Surfaces as a `SessionLifecycle` chunk with text `"turn_complete:<subtype>"`. Drives B's executor's per-turn timing instrumentation but **does not** drive phase transition.
+2. **Task-level completion** — the prompt-instructed sentinel string (e.g., `READY FOR THE NEXT PHASE`) matched by B's executor's sliding buffer over assistant-text. Fires when the LLM itself has decided its task is complete (across potentially many turns of reasoning and tool use). This is what drives B's phase-cycle state machine to wind down the session.
+
+Conflating (1) and (2) causes premature phase transitions — the model frequently pauses mid-task for tool execution, and collapsing "turn over" with "done" would treat each such pause as the end of work. The two are orthogonal and both survive as first-class observation channels.
+
+### 12.5 Tool-call boundary for in-session Queries (new)
+
+Sub-F introduced a new architectural role for C that the original brainstorm did not anticipate: **in-session queries must be routable through the daemon's message router while the session is live**.
+
+Concretely: a running plan-cycle session may need to ask an expert a question ("how should I handle this lifetime annotation?"). That query is a `Query` message in F's model, routed through `routing.ex` to an `ExpertActor`, answered in a fresh session, and returned to the originating session. The originating session should not block on human input and should not spawn its own child session directly — the daemon owns spawning.
+
+C's adapter therefore gains a **tool-call boundary**:
+
+- At spawn time, the adapter injects a set of Mnemosyne-specific tools via Claude Code's MCP / tool interface (e.g., `ask_expert`, `dispatch_to_plan`, `read_vault_catalog`). Exact mechanism TBD during C's implementation phase — options are (a) an MCP server the daemon exposes on a Unix socket, (b) a `claude` CLI tool-definition file pointed at by `--mcp-config`, or (c) fabricated tool shims via the plugin system. Spike a choice before committing.
+- When an `assistant` event contains a `tool_use` block whose `name` matches a Mnemosyne-injected tool, the GenServer intercepts it **before** forwarding as a normal `HarnessOutput` chunk. It invokes the corresponding daemon router call (synchronously or via a child task), waits for the result, and sends the result back into the session as a `user` / `tool_result` envelope via `:exec.send/2`.
+- Non-Mnemosyne tool-use events flow through unchanged, still subject to `ToolProfile` defence-in-depth.
+
+This is the contract sub-F requires from C. It does not weaken tool-profile enforcement — the Mnemosyne-injected tools are an additional set, explicitly whitelisted per profile, and orthogonal to the `IngestionMinimal` / `ResearchBroad` axis. It is also the mechanism by which `PlanActor` and F's Level 2 routing agent reason internally (they spawn internal sessions through C, which is now a first-class abstraction, not a thin wrapper).
+
+Pending implementation decisions recorded as Q6 in §12.9.
+
+### 12.6 Observability re-cast: `:telemetry` + typed `Mnemosyne.Event.*` structs
+
+§11.5 forward-pointed at sub-M as "not the start of a metrics framework." Sub-M has since brainstormed and committed to a hybrid pattern (`tracing` + typed-event-enum originally; now re-cast to `:telemetry` + typed Elixir struct events for the BEAM runtime). C's observability story under the amendment is:
+
+- **All state transitions** in the session GenServer emit `:telemetry.execute/3` events under the `[:mnemosyne, :harness, :claude_code, ...]` namespace. The spans wrap `handle_info/2` clauses so every message is observable as a typed event.
+- **Typed `Mnemosyne.Event.*` structs** at the C boundary: `Mnemosyne.Event.HarnessOutput`, `Mnemosyne.Event.SessionLifecycle`, `Mnemosyne.Event.SpawnLatencyReport`, `Mnemosyne.Event.HarnessError`. These are the structured events B's executor, E's pipeline, M's instrumentation, and the Obsidian ingestion pipeline consume. Transport is `:telemetry`; representation is typed structs.
+- **`SpawnLatencyReport` is still a tactical seed**, not a framework. The memory-committed parallel-emit migration pattern applies: (1) C's v1 keeps writing `<staging>/spawn-latency.json` unchanged; (2) sub-M's v1 lands `:telemetry` histograms at the same measurement points in parallel; (3) mechanical verification confirms M's data matches the JSON file within tolerance; (4) C's writer is deleted by a subsequent sub-M triage task. This is exactly the staged migration pattern §11.5 anticipated — only the telemetry stack changes.
+- **Error paths still feed a dump buffer**. Sub-M's event-tail dump mechanism survives as an Elixir equivalent (ring buffer in `:persistent_term` or per-actor ETS table, flushed to disk on error). C's GenServer calls `Mnemosyne.Observability.dump_event_tail/3` in every error path before returning.
+
+C still **does not commit** to any specific histogram library, any specific dashboard, or any specific persistence format beyond the staging-directory JSON file. Those decisions remain sub-M's.
+
+### 12.7 Multi-adapter support reserved for sub-O
+
+§1.1 named Codex and Pi as "future adapters" without committing to when. The orchestrator's v1.5+ roadmap now has **sub-O (mixture of models)** as the owner of multi-adapter support. F's daemon config reserves a `[harnesses.*]` section for per-adapter configuration; F's actor declaration format reserves a `model:` field for per-actor model selection. **v1 ships Claude Code only.** Sub-O brainstorms the multi-adapter contract, per-actor model selection, local-model adapters (Ollama, llama.cpp), and cost telemetry, but only after v1 lands.
+
+Consequence for C's amendment: the `Mnemosyne.HarnessAdapter` behaviour is written so a second implementor could be added in sub-O without re-shaping the callers. Concretely, the behaviour's callback signatures use neutral terms (`session_id`, `prompt`, `tool_profile`, `working_dir`) and avoid Claude-Code-specific leak (stream-json schema, NDJSON, `system/init` event names). Claude-Code-specific parsing lives behind the behaviour in `Mnemosyne.HarnessAdapter.ClaudeCode` and its submodules.
+
+### 12.8 Dependency footprint
+
+The Rust three-new-crates budget (§1.3 goal 8) maps to one new Hex dep plus transitives:
+
+- **`erlexec`** (Hex) — a C++ port program that handles POSIX process-group management, signals, stdin wiring, and bidirectional I/O for child processes. Not a NIF — runs as a separate OS process (`exec-port`) outside BEAM schedulers, so no NIF-scheduler risks. Used for the spawn, stdin, stdout, stderr, and process-group paths that the Rust design needed `std::process::Command` + `nix` + `which` for.
+- **`jason`** — already in the daemon's dep tree for every other JSON-touching sub-project. No new dep for C.
+- **No PTY library required.** The original design's appendix-B-like `portable-pty` equivalent is not needed. This is the spike's load-bearing finding.
+
+`:exec.which/1` replaces `which::which/1`. Standard library OTP (`Process`, `GenServer`, `DynamicSupervisor`, `:persistent_term`, `:telemetry`) replaces `crossbeam-channel`.
+
+Written justification: erlexec is the only mature BEAM-native way to spawn child processes with process-group termination, stdin wiring, and bidirectional I/O that survives the "integration over reinvention" principle. The alternatives (`Port.open/2` with `{:spawn_executable, ...}`, `System.cmd/3`) cannot do process-group termination of grandchildren. Hand-rolling a C NIF would create scheduler risks erlexec explicitly avoids.
+
+### 12.9 Open implementation questions (Elixir-specific)
+
+The §10 Q1-Q5 IOUs are partially resolved by the spike and partially carry forward:
+
+- **Q1 (empty-tool-list spelling):** still open. The spike used `--disallowed-tools` which is confirmed working; the `--allowed-tools ""` spelling was not tested. Resolution: Task 3 in the rewritten sub-C backlog, run against the pinned `claude` version on day 1 of implementation.
+- **Q2 (`--permission-mode` choice):** still open. Same resolution as Q1.
+- **Q3 (`--print "<prompt>"` + stream-json shape):** **resolved by the spike.** The spike confirmed that with `--input-format stream-json`, the initial prompt **must** be delivered as the first stdin envelope via `:exec.send/2`. The `--print <prompt>` CLI-arg form triggers `Input must be provided either through stdin or as a prompt argument when using --print` and fails. Lock: v1 delivers every prompt — including the initial one — as an `{"type":"user","message":{"role":"user","content":[...]}}` NDJSON envelope on stdin.
+- **Q4 (stream-json field names):** **resolved by the spike.** Canonical samples captured in `spikes/beam_pty/results/full-run.log` covering `system/init`, `rate_limit_event`, `assistant/thinking`, `assistant/text`, `assistant/tool_use` (implicit via tool-list), and `result/success`. Copy samples into `test/fixtures/harness/captured-stream-json/` during implementation Task 3 and lock the Elixir stream-parser module against them.
+- **Q5 (warm-pool reset mechanism):** still open. Only fires if the C-1 gate trips. The three-check spike protocol (§7.4) is unchanged.
+- **Q6 (new — tool-call boundary mechanism for in-session Queries):** how are Mnemosyne-injected tools exposed to the running claude session? Candidates: (a) MCP server on Unix socket with `--mcp-config`; (b) stdin-side tool-definition preamble; (c) plugin-shipped tool shims. Resolution: focused spike at the start of C's implementation phase, before the GenServer wiring is finalised. The choice affects how the GenServer intercepts tool-use events.
+- **Q7 (new — `exec-port` supervision):** `erlexec` runs `exec-port` as a separate OS process. What happens if `exec-port` crashes while sessions are live? Mitigation: the daemon's top-level supervisor owns erlexec; a restart drops all live harness sessions (they are not persistent by design — plans restart their current phase on daemon restart). Resolution: document behaviour in C's implementation phase; the sub-C sibling plan's `memory.md` captures the decision.
+
+### 12.10 Backlog implications
+
+The sub-C sibling plan at `LLM_STATE/sub-C-adapters/backlog.md` was written against the Rust implementation and is marked for rewrite. The rewrite preserves the task *sequence* (setup → day-1 verification → fixture replay → live adapter wire layer → GenServer → lifecycle → instrumentation → tests → dogfood gate → conditional warm-pool) and the task *intent*, and replaces:
+
+- "`Cargo.toml`" → "`mix.exs` with `{:erlexec, "~> 2.2"}` and `{:jason, "~> 1.4"}` (already present)"
+- "`src/harness/` module skeleton" → "`Mnemosyne.HarnessAdapter` behaviour + `Mnemosyne.HarnessAdapter.ClaudeCode` + `Mnemosyne.HarnessAdapter.FixtureReplay` under `lib/mnemosyne/harness_adapter/`"
+- "`trait_def.rs` types" → "`Mnemosyne.HarnessAdapter` behaviour callbacks + typed `Mnemosyne.Event.*` structs"
+- "`std::process::Command` + `process_group(0)`" → "`:exec.run/2` with `:kill_group`, `:stdin`, `{:stdout, self()}`, `{:stderr, self()}`, `{:kill_timeout, 1}`"
+- "three-thread actor architecture" → "one GenServer per session under a `DynamicSupervisor`"
+- "`crossbeam_channel::select!`" → "`handle_info/2` pattern match on erlexec and client message kinds"
+- "`killpg(pgid, SIGTERM)` → 500 ms → `killpg(pgid, SIGKILL)`" → "`:exec.kill(ospid, 15)` → 500 ms → `:exec.kill(ospid, 9)`"
+- "`tracing::instrument`" → "`:telemetry.span/3`"
+- "`metrics::histogram!`" → "`:telemetry.execute/3` with histogram handlers attached under sub-M"
+
+The fixture files, the `FixtureRecord` JSON-Lines format, the tool-profile → flag mapping, the defence-in-depth check, the `CrashedBeforeReady` heuristic, the latency-report points, and the dogfood acceptance gate all carry forward unchanged in intent.
+
+The rewrite itself is a discrete task in the sub-C sibling plan's backlog, not something this amendment attempts to inline here. **The authoritative implementation task list lives in the sibling plan, not in this design doc.**
+
+### 12.11 Cross-sub-project impact
+
+- **Sub-B (phase cycle):** amendments 1-3 from §11.1 are dropped as Rust-specific; the `SessionLifecycle` chunk (amendment 4) and the sentinel-matching executor requirement (5) survive unchanged. B's amendment task (Priority 1 in orchestrator backlog) absorbs the sibling re-casting from `Box<dyn HarnessSession>` / `Arc<dyn HarnessSession>` into GenServer PIDs and from thread channels into `GenServer.call` / `handle_info` pairs.
+- **Sub-E (ingestion):** E's Stage 5 becomes dispatch-to-experts under F's amendment; C's `ToolProfile::IngestionMinimal` is still the profile E uses for its own internal reasoning sessions. No new requirements on C from E.
+- **Sub-F (hierarchy, actor model, routing):** C's tool-call boundary (§12.5) is F's prerequisite for in-session queries. F's sibling plan scaffolding (orchestrator Priority 3.1) is unblocked by this amendment together with the spike.
+- **Sub-M (observability):** C's re-cast under §12.6 adopts M's `:telemetry` + typed-structs pattern as soon as M's implementation lands. C's tactical `SpawnLatencyReport` remains in place until the parallel-emit verification window closes.
+- **Sub-O (mixture of models):** reserved; sub-C ships single-adapter only (§12.7). The `Mnemosyne.HarnessAdapter` behaviour is the seam sub-O will extend.
+- **Sub-G (migration):** the existing `<project>/adapters/claude-code/` legacy plugin directory is now fully orthogonal to C's implementation (previously irrelevant; still irrelevant — the BEAM pivot does not touch it). No new work for G from this amendment.
+- **Sub-P (team mode, v2+):** C's session GenServer is a local-BEAM primitive. Cross-daemon harness spawning is not a v1 concern. Sub-P owns the decision whether remote daemons expose their harness adapters over BEAM distribution or whether each daemon spawns locally and the *plans* coordinate via distribution.
+
+### 12.12 Evolution log
+
+- **2026-04-13** — original design committed (`71fd307`), amended at `b1a8cea` with the four-amendment + sentinel-requirement clarification.
+- **2026-04-14** — sub-F brainstorm committed Mnemosyne to a persistent BEAM daemon; sub-C's entire Rust framing was flagged as needing amendment.
+- **2026-04-15** — BEAM PTY spike at `spikes/beam_pty/` completed: 8/8 tests green, PTY premise inverted, pipes-only erlexec validated, cmux noise mitigation identified. This §12 amendment lands.
+- **Next** — sub-C sibling plan's `backlog.md` rewritten against the Elixir implementation. sub-F sibling plan scaffolding proceeds. Sub-B amendment absorbs the PID-based session handle change.
 
 ---
 

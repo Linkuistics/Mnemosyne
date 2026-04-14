@@ -41,13 +41,12 @@ Tasks for merging LLM_CONTEXT functionality into Mnemosyne and building the pers
   **Exit criteria**: either a working Elixir script that spawns Claude Code, runs a trivial prompt, captures output until a sentinel, and terminates the process cleanly — or a documented reason why the approach won't work, with a fallback plan.
 
   **Output:** short spike report at `docs/superpowers/specs/2026-MM-DD-beam-pty-spike.md` and a decision: proceed with `erlexec` or implement the Rust PTY-wrapper fallback.
-- **Results:** _pending_
 
 ## Priority 1 — F-triggered amendments to done brainstorms
 
 F's architecture commitment affects every done brainstorm. Each amendment is a short work phase: read the existing design doc, identify Rust-specific or pre-F-specific sections, replace with BEAM/actor/dispatch-aware equivalents, commit.
 
-**Execution note (triage 2026-04-15):** Five tasks in this section are currently unblocked and can run in parallel: Sub-A amendment, Sub-B amendment, Sub-D brainstorm, Sub-E amendment, Sub-M amendment. Sub-C amendment is blocked on the BEAM PTY spike (P0). Sub-G, Sub-H, and Sub-I amendments produce scope-framing documents for future brainstorms of those sub-projects (no existing design doc to amend — these capture F's impact on the brainstorm scope). See Priority 2 for the corresponding G/H/I brainstorm tasks.
+**Execution note (triage 2026-04-15, updated):** All nine P1 tasks are now unblocked and can run in parallel. The BEAM PTY spike (P0) completed in Session 10 — pipes-only erlexec validated, PTY premise inverted — unblocking Sub-C amendment and by extension P3.1 (sub-F scaffolding). **Critical path:** Sub-C amendment (absorb spike results into C's design doc) and P3.1 (scaffold sub-F sibling plan) are the highest-leverage next tasks. Sub-G, Sub-H, and Sub-I amendments produce scope-framing documents for future brainstorms of those sub-projects (no existing design doc to amend — these capture F's impact on the brainstorm scope). See Priority 2 for the corresponding G/H/I brainstorm tasks.
 
 ### Sub-A amendment — daemon caller integration `[amendment]`
 - **Status:** not_started
@@ -80,19 +79,40 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
 - **Results:** _pending_
 
 ### Sub-C amendment — Elixir implementation and multi-adapter reservation `[amendment]`
-- **Status:** not_started
-- **Dependencies:** BEAM PTY spike complete
+- **Status:** done (Session 11, 2026-04-15)
+- **Dependencies:** BEAM PTY spike complete (**done**, Session 10)
 - **Description:** Amend sub-C's design doc to reflect:
-  - Implementation in Elixir using `erlexec` (or the spike's fallback)
+  - Implementation in Elixir using pipes-only `erlexec` (spike validated; PTY premise inverted — stream-json is pure NDJSON over stdio, no pseudo-terminal needed)
+  - erlexec opts: `[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group, {:kill_timeout, 1}]`; `:stdin` bare atom required
   - Actor-style threading replaced by OTP GenServer supervision (one GenServer per session)
   - `HarnessSpawner` as an Elixir behavior instead of a Rust trait
   - Tool-call boundary for in-session Queries: C's adapter intercepts `ask_expert` and similar tool calls, routes them through F's router, delivers responses back as tool-call results
   - Multi-adapter support **reserved for sub-O** via the `[harnesses.*]` config section — v1 only implements Claude Code
   - Internal session spawning is how plan actors and F's Level 2 routing agent reason
   - `SpawnLatencyReport` emits via sub-M's `:telemetry` + typed struct events
+  - Detect `{"type":"result"}` as protocol-level "turn over" signal (orthogonal to task-level sentinel)
+  - cmux noise mitigation: `--setting-sources project,local --no-session-persistence` on all daemon-spawned sessions
 
-  Significant amendment — most of C's core design survives but the implementation language and actor-style threading are completely re-cast.
-- **Results:** _pending_
+  Significant amendment — most of C's core design survives but the implementation language and actor-style threading are completely re-cast. Spike results at `spikes/beam_pty/`.
+- **Results:** Landed as **§12 "Amendment — BEAM/Elixir Pivot (2026-04-15)"** in `docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`. The amendment notice at the top of the doc and the new Table-of-Contents entry redirect readers to §12 as the authoritative Elixir/BEAM projection; §12 is declared to supersede §2–§8 wherever they conflict.
+  - **§12.1 supersession table** — one-row-per-element mapping from Rust to Elixir: `src/harness/` → `lib/mnemosyne/harness_adapter/`; Cargo deps → `erlexec` + `jason`; three-thread actor → one GenServer per session under `DynamicSupervisor`; `std::process::Command` + `process_group(0)` → `:exec.run/2` with `[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group, {:kill_timeout, 1}]`; `crossbeam_channel::select!` → `handle_info/2` pattern match; `killpg(SIGTERM)` + 500 ms + `killpg(SIGKILL)` → `:exec.kill(ospid, 15)` + 500 ms + `:exec.kill(ospid, 9)`; `tracing::instrument` → `:telemetry.span/3`.
+  - **§12.2 survives verbatim** — bidirectional NDJSON, defence-in-depth tool enforcement, process-group termination from v1, cold-spawn-only + C-1 gate, fixture replay parity, `SessionLifecycle` chunk variant, sentinel detection in B's executor, hard-errors-by-default, dogfood acceptance test as swap-in moment.
+  - **§12.3 normative spawn path** — `Mnemosyne.HarnessAdapter.ClaudeCode.spawn/1` sketch with the exact erlexec opts, mandatory `:stdin` atom, `{:cd, cwd}` working-directory wiring, and the cmux mitigation args (`--setting-sources project,local --no-session-persistence`).
+  - **§12.4 two protocol signals** — protocol-level `{"type":"result"}` surfaces as a `SessionLifecycle` `"turn_complete:<subtype>"` chunk; task-level prompt-instructed sentinel still matched by B's sliding-buffer executor. Explicit warning that conflating them causes premature phase transitions.
+  - **§12.5 new tool-call boundary for in-session Queries** — F-introduced contract: C's adapter injects Mnemosyne-specific tools (`ask_expert`, `dispatch_to_plan`, `read_vault_catalog`), intercepts matching `tool_use` blocks from assistant events, routes them through the daemon router, and writes results back via `:exec.send/2` as `user`/`tool_result` envelopes. Exact injection mechanism (MCP server vs tool-definition preamble vs plugin shim) deferred to implementation-phase spike (new Q6).
+  - **§12.6 observability re-cast** — `:telemetry` + typed `Mnemosyne.Event.*` structs per sub-M pattern; `SpawnLatencyReport` remains a tactical seed under the parallel-emit migration (C writes JSON file, M lands histograms in parallel, mechanical verification, C writer deleted). Error paths still feed a dump buffer.
+  - **§12.7 multi-adapter reservation** — sub-O owns multi-adapter + per-actor model selection + local-model adapters + cost telemetry. v1 ships Claude Code only; the behaviour is written to avoid Claude-Code-specific leak so sub-O can extend.
+  - **§12.8 dependency footprint** — `erlexec` (Hex) + `jason` (already present); no PTY lib; `:exec.which/1` replaces `which::which/1`. Written justification that erlexec is the only mature BEAM-native path that does process-group termination of grandchildren.
+  - **§12.9 open questions** — Q3 (prompt-as-arg vs stdin envelope) and Q4 (stream-json field names) **resolved by the spike**; Q1/Q2/Q5 carry forward to day-1 implementation; new Q6 (tool-call boundary mechanism) and Q7 (`exec-port` supervision).
+  - **§12.10 backlog rewrite guidance** — preserves task *sequence* and *intent*, replaces every Rust idiom with its Elixir equivalent. Explicit that the rewritten task list lives in the sibling plan's `backlog.md`, not inline in the design doc.
+  - **§12.11 cross-sub-project impact** — B's amendments 1-3 dropped as Rust-specific (receiver typing, `Arc<dyn>`, `Send + Sync`), amendments 4 (SessionLifecycle) and 5 (sentinel detection) survive verbatim. E/F/M/O/G/P impact spelled out.
+  - **§12.12 evolution log** — original commit, F brainstorm pivot flag, spike completion, §12 amendment, rewritten-backlog next step.
+
+  Sibling plan updates:
+  - `LLM_STATE/sub-C-adapters/backlog.md` top-notice now points to §12 as the starting point for the rewritten task list and flags the Rust-specific implementation task list below as still needing rewrite.
+  - `LLM_STATE/sub-C-adapters/memory.md` BEAM/Elixir pivot section gains a §12 breadcrumb summary; implementation open questions updated — Q3/Q4 marked RESOLVED by the spike, Q6 (tool-call boundary mechanism) and Q7 (`exec-port` supervision) newly recorded.
+
+  **Unblocks**: **P3.1** sub-F sibling plan scaffolding (no longer blocked on C's design direction — the Elixir projection is committed) and the **sub-C implementation-phase backlog rewrite** (now a discrete task in the sub-C sibling plan, not blocking the orchestrator).
 
 ### Sub-D brainstorm (scope collapsed) — daemon singleton + external-tool coordination `[brainstorm]`
 - **Status:** not_started
@@ -278,9 +298,9 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
 ## Priority 3 — Decisions and gates
 
 ### Scaffold sub-F sibling plan (post BEAM spike) `[scaffold]`
-- **Status:** not_started
-- **Dependencies:** BEAM PTY spike complete
-- **Description:** After the BEAM spike validates the PTY approach (or drives to the Rust-wrapper fallback), scaffold sub-F's sibling plan at `LLM_STATE/sub-F-hierarchy/` with the task list from F's design doc §11. This is what F's brainstorm deferred because the implementation plan details depend on the spike's outcome.
+- **Status:** not_started (**unblocked** — spike done Session 10)
+- **Dependencies:** BEAM PTY spike complete (**done**)
+- **Description:** Spike validated pipes-only erlexec (no PTY, no Rust wrapper fallback). Scaffold sub-F's sibling plan at `LLM_STATE/sub-F-hierarchy/` with the task list from F's design doc §11. This is what F's brainstorm deferred because the implementation plan details depend on the spike's outcome.
 
   Output: `LLM_STATE/sub-F-hierarchy/` with backlog, memory, session-log, phase files.
 - **Results:** _pending_

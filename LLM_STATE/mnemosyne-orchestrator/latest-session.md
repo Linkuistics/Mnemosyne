@@ -1,73 +1,23 @@
-### Session 10 (2026-04-14T23:03:06Z) — BEAM PTY spike PASS (with premise inversion)
+### Session 11 (2026-04-14T23:23:09Z) — sub-C amendment absorbs BEAM pivot + spike findings
 
-- **Attempted**: validate that `erlexec` can drive the real `claude` CLI over
-  a PTY with bidirectional stream-json, sentinel detection, process-group
-  termination, configurable tool profiles, and backpressure-friendly output.
-  Installed Erlang/OTP 28 + Elixir 1.19.5 via Homebrew. Scaffolded an
-  Elixir mix project at `spikes/beam_pty/` with erlexec 2.2.3 and jason.
-  Wrote a `BeamPty.Sentinel` sliding-buffer matcher (6 unit tests) and a
-  `BeamPty.ClaudeSession` thin wrapper over `:exec.run/2` (2 live probes
-  tagged `:live`).
-
-- **Worked**: 8/8 tests pass. Pipes-only erlexec configuration
-  (`[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group,
-  {:kill_timeout, 1}]`) cleanly drives claude end-to-end: `:exec.send/2`
-  delivers NDJSON to stdin, `{:stdout, ospid, binary}` messages carry each
-  stream-json event (init / rate_limit / assistant thinking / assistant
-  text / result), `{:DOWN, ospid, :process, pid, reason}` fires on exit.
-  Sentinel detector correctly finds `READY FOR THE NEXT PHASE` in claude's
-  assistant text. Process-group termination (`:kill_group` + SIGTERM +
-  500ms grace + SIGKILL) kills the grandchild of a `/bin/sh -c "sleep 60 &
-  wait"` spawn. `--disallowed-tools` passes through at the CLI flag level
-  and is visible in claude's `system/init` event.
-
-- **Didn't work initially**: (1) `claude` on PATH resolves to a cmux
-  wrapper script that injects `--session-id` and `--settings` flags
-  incompatible with the probe — fixed by pointing at the real binary at
-  `/Users/antony/.local/bin/claude`. (2) erlexec's `:pty + :stdin`
-  combination: stdin is NOT wired to the child's real fd 0, so claude
-  reads nothing and errors with "Input must be provided either through
-  stdin or as a prompt argument when using --print". (3) DOWN message
-  format from erlexec is custom: `{:DOWN, OsPid, :process, Pid, Reason}`
-  — first element is the integer OS pid, not a monitor ref. (4) With
-  PTY, all child output arrives tagged `:stderr` rather than `:stdout`
-  because PTY slave merges both. (5) Sending `:eof` immediately after
-  the user message closed stdin before claude could read it.
-
-- **Suggests trying next**: absorb sub-C's amendment task (P1.3)
-  immediately now that the approach is validated. The amendment should:
-  (a) drop "PTY" from the stream-json path entirely; (b) specify
-  pipes-only `erlexec` opts; (c) wrap the session in a `GenServer` with
-  the NDJSON line parser and the sub-M telemetry boundary; (d) detect
-  `{"type":"result"}` as the protocol-level "turn over" signal,
-  orthogonal to the phase-prompt sentinel (task-level "done with the
-  work"); (e) describe cmux-hook noise mitigation via
-  `--setting-sources project,local --no-session-persistence`. Once
-  amended, P3.1 (sub-F sibling plan scaffolding) is also unblocked.
-
+- **Task chosen**: Priority 1.3 "Sub-C amendment — Elixir implementation and multi-adapter reservation" from `mnemosyne-orchestrator/backlog.md`. Selected as the critical-path unblocker explicitly named in `memory.md` ("absorb sub-C amendment (P1.3): drop PTY, specify pipes-only erlexec, GenServer wrapper, NDJSON parser, telemetry boundary, cmux noise mitigation"), with spike evidence freshest from Session 10 and direct flow-through to P3.1 sibling-plan scaffolding.
+- **What was attempted**: append a BEAM/Elixir amendment to `docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md` that preserves every surviving design decision from the original Rust brainstorm while re-projecting the implementation stack onto Elixir/OTP, and thread the new §12 section into the sub-C sibling plan (`LLM_STATE/sub-C-adapters/backlog.md` + `memory.md`) and the orchestrator's own backlog as the task Results.
+- **What worked**:
+  - The amendment landed as a self-contained §12 block with twelve subsections (§12.1 supersession table, §12.2 what survives, §12.3 normative `:exec.run/2` spawn path, §12.4 two protocol signals, §12.5 tool-call boundary for in-session Queries, §12.6 `:telemetry` observability re-cast, §12.7 multi-adapter reservation to sub-O, §12.8 dependency footprint, §12.9 resolved + new open questions, §12.10 backlog rewrite guidance, §12.11 cross-sub-project impact, §12.12 evolution log).
+  - Design doc frontmatter was updated with `amended:` and `amended-by:` fields plus an "AMENDMENT NOTICE" banner that directs readers to §12 and flags Rust-specific sections as superseded wherever they conflict. Table of Contents gained a §12 entry.
+  - Sub-C sibling plan memory gained a §12 breadcrumb summary and its open-questions list now records Q3/Q4 as RESOLVED by the BEAM PTY spike (prompt delivery mechanism + stream-json field names are locked) and adds Q6 (tool-call-boundary mechanism: MCP server / stdin preamble / plugin shim) and Q7 (`exec-port` supervision behaviour) as newly surfaced questions.
+  - Sub-C sibling plan backlog's top notice now points to §12 as the starting point for the rewritten task list.
+  - Orchestrator's P1.3 task was marked `done (Session 11, 2026-04-15)` with a comprehensive Results block summarising every §12 subsection and explicitly declaring P3.1 (sub-F sibling plan scaffolding) unblocked.
+  - File structure verified: design doc is now 1511 lines with a clean single `## 12.` heading and twelve `### 12.` subsections; TOC and actual section order match.
+- **What didn't**:
+  - The full 1311-line original design doc was never re-read in its entirety — I relied on §11 / appendix structural reads, the frontmatter, the memory.md-recorded decisions, and the spike README. This is fine for an *amendment* (which is append-only plus frontmatter markers) but would be inadequate for any task that wanted to rewrite §2–§8 inline. The amendment deliberately chose the append + supersession pattern specifically to avoid that risk.
+  - The sub-C sibling plan's Rust-specific task list (Tasks 1–24 in `backlog.md`) is still the pre-pivot text and has not been rewritten to Elixir. That rewrite is a discrete task that belongs to a future sub-C work phase, not to this amendment. The top-of-file notice continues to flag the need.
+- **What this suggests trying next**:
+  1. **P3.1 sub-F sibling plan scaffolding** — now unblocked by both the spike and the §12 amendment. Next natural orchestrator work phase. F's §11 design doc already lists the task set; scaffolding is mechanical.
+  2. **Sub-C sibling plan backlog rewrite** — discrete work inside the sub-C plan (not the orchestrator). Can proceed in parallel with F scaffolding because the two plans are siblings. §12.10 is the rewrite guide.
+  3. **Sub-B amendment (P1.2)** — depends on the same F-commitment material; absorbing §12's PID-based session handle supersedes amendments 1–3 from §11.1 on the B side. Queuing this next means B's amendment can be a small re-framing rather than a bigger one.
 - **Key learnings / discoveries**:
-  - **The PTY premise was wrong.** Sub-C's stream-json path is stdio
-    NDJSON, not a terminal. A PTY is only needed if sub-C ever wants to
-    drive claude's interactive TUI (slash commands, arrow keys, ANSI
-    redraws), which the memory invariant "no slash commands in the
-    harness — control forbidden, observation required" explicitly rules
-    out. This is a meaningful simplification for sub-C.
-  - **erlexec uses a C++ port program**, not a NIF. `exec-port` is
-    spawned as a separate OS process that handles PTY allocation,
-    signals, and process groups without blocking BEAM schedulers. This
-    is why erlexec can safely use `ptrace`, `setreuid`, and process
-    groups.
-  - **`:stdin` bare atom is required** if you want `:exec.send/2` to
-    work. erlexec defaults stdin to `:null` (cat echo test exited with
-    status 0 immediately otherwise).
-  - **cmux SessionStart hooks pollute stream-json output**. Any claude
-    invocation triggers ~10KB of hook JSON from user-global settings.
-    `--setting-sources project,local` silences them cleanly.
-  - **Sentinel sliding-buffer invariant**: window retained between
-    feeds is exactly `sentinel_size - 1` bytes. Verified empirically
-    after feeding 10KB of non-matching data (buffer stays at 23 bytes
-    for the 24-byte sentinel). This is load-bearing for long-running
-    phase sessions that may emit MB of assistant text.
-  - **`{"type":"result"}`** is the protocol-level turn-over marker —
-    complementary to the phase-prompt sentinel for task-level done.
-    Sub-C should detect both.
+  - **Append-plus-supersede is the right pattern for amendments to large brainstorm docs.** Attempting to rewrite §2–§8 inline would have required loading the full 1311-line source, producing a diff-like edit surface, and risking drift between superseded paragraphs and the amendment narrative. Instead, a frontmatter banner + single §12 block + TOC entry + clear "§12 supersedes earlier sections wherever they conflict" statement preserves the original reasoning as historical context while making the current-truth trivial to find.
+  - **Memory.md-captured architectural decisions carry enough context to write an amendment without re-reading the brainstorm source.** The distilled invariants in `mnemosyne-orchestrator/memory.md` (BEAM commitment, sealed actor types, cmux mitigation, erlexec opts, pipes-only invariant, two-signal completion model, tool-call boundary) were sufficient to reason about every §12 subsection. The design doc was consulted only for §11's cross-sub-project structure, not for its earlier content. This validates the memory.md-as-load-bearing discipline: if memory.md is maintained well, amendments don't need to re-derive anything.
+  - **The spike resolved two §10 IOUs as a side effect.** Q3 (prompt delivery shape) and Q4 (stream-json field names) both had day-1 verification costs in the original Rust plan. The spike's canonical session log (`spikes/beam_pty/results/full-run.log`) now serves as the lock source for the Elixir stream-parser module. Net effect: two tasks in the sub-C implementation backlog shrink to "copy fixtures + lock parser" instead of "run behavioural tests against the pinned binary".
+  - **Two new open questions surfaced from sub-F integration, not from Rust→Elixir translation.** Q6 (tool-call-boundary mechanism) and Q7 (`exec-port` supervision) exist because F added the in-session Query architectural element and because BEAM adds a new crash-mode (exec-port vs the Rust process-model's Command children). Neither is a regression from the BEAM pivot; both needed recording.

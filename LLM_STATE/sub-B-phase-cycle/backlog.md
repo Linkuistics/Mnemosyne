@@ -117,7 +117,11 @@ best next task with input from the user.
      detection lives in B (not C) because sentinels are coupled to
      phase prompts (which B owns) and the mechanism is harness-agnostic.
      The matcher must be sliding-buffer based (sentinel may span
-     multiple chunks) and configurable per phase.
+     multiple chunks) and configurable per phase. **Validated by the
+     BEAM PTY spike** (Session 10, 2026-04-15; `spikes/beam_pty/`):
+     sliding-buffer with window bounded to `sentinel_size - 1` bytes
+     works across single-chunk, split, drip, false-prefix, and
+     false-overlap cases. See memory.md for details.
 
   **Work to perform.** (a) Update `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`
   §2.2 (trait definitions) and §4.1 (`HarnessAdapter` / `HarnessSession`

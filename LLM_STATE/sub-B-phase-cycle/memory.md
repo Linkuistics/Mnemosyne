@@ -275,6 +275,26 @@ six core abstractions survive conceptually but change form (traits →
 behaviours, structs → typed maps/structs, `Arc<dyn ...>` → GenServer
 references, etc.).
 
+## Sentinel sliding-buffer matcher: validated by spike
+
+The BEAM PTY spike (Session 10, 2026-04-15; code at `spikes/beam_pty/`)
+validated the sentinel sliding-buffer detection approach that B's
+`LlmHarnessExecutor` depends on. Key findings:
+
+- Sliding-buffer matcher with window bounded to `sentinel_size - 1` bytes
+  works correctly across single-chunk delivery, two-chunk split,
+  grapheme-by-grapheme drip, false-prefix, and false-overlap cases.
+- `{"type":"result"}` is the protocol-level "turn over" signal (orthogonal
+  to B's task-level sentinel detection). B must not conflate the two:
+  sentinel detection is task-level ("phase done"), `result` events are
+  protocol-level ("model turn complete").
+- B owns sentinel detection because sentinels are coupled to phase prompts
+  (which B owns); the mechanism is harness-agnostic.
+
+This confirms the approach described in the "Absorb Sub-C trait amendments"
+backlog task is sound and can proceed to implementation without further
+spiking.
+
 ## Risk watch list
 
 Ranked by impact × likelihood from §5.4 of the spec. Each has a mitigation

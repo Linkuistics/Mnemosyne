@@ -57,7 +57,7 @@ Measurement for acceptance gates or diagnostics is emitted unconditionally — n
 The harness runs as a pure worker with no user-facing command surface. Every user action flows through the client-daemon protocol. Three observation surfaces: chunk-level (assistant text, tool use, tool result), protocol-level (session lifecycle via stream-json), task-level (prompt-instructed sentinel strings detected by B's executor in assistant-text stream).
 
 ### Task-level completion via sentinel strings
-Protocol-level "turn over" means the model stopped emitting tokens. Task-level "done with the work" requires the LLM's self-assessment — conflating the two causes premature phase transitions. Mechanism: each phase prompt ends with "when finished say READY FOR THE NEXT PHASE"; B's executor runs a sliding-buffer matcher over assistant-text. Sentinel detection lives in B because sentinels are coupled to phase prompts.
+Protocol-level "turn over" is `{"type":"result"}` in stream-json — the model stopped emitting tokens. Task-level "done with the work" requires the LLM's self-assessment — conflating the two causes premature phase transitions. Mechanism: each phase prompt ends with "when finished say READY FOR THE NEXT PHASE"; B's executor runs a sliding-buffer matcher over assistant-text. Sub-C detects both: `{"type":"result"}` for protocol-level, sentinel for task-level. Sentinel detection lives in B because sentinels are coupled to phase prompts.
 
 ### Obsidian is the committed maintenance/explorer UI
 Every file format, directory layout, and cross-reference decision targets Obsidian: Dataview-friendly kebab-case YAML frontmatter, wikilinks for cross-references, tags as first-class metadata, directory structure for Obsidian's file tree, a Mnemosyne-provided `.obsidian/` template. V1 ships a maximally Obsidian-native baseline; K (Obsidian plugin client) enhances post-v1. The "explorers are load-bearing" capability remains; implementation is delegated to Obsidian. I's scope shrinks from "unified explorer framework" to "document which Obsidian features cover which data surfaces."
@@ -117,7 +117,7 @@ Consequences: (1) no `migrate` subcommand; (2) hardcoded `~/.mnemosyne/` in old 
 Mnemosyne reads plan outputs (`memory.md`, `session-log.md`) after sessions end or at phase boundaries. The LLM never invokes CLI to "promote." E's pipeline stages: extract → classify → contradict → score → **dispatch to experts** (Stage 5, post-F amendment). Experts review candidate entries in fresh context and absorb, reject, or cross-link them.
 
 ### Harness adapter layer abstracts multiple harnesses
-Each adapter handles spawn, prompt-passing, output capture, terminal/PTY, and lifecycle. **V1 ships Claude Code adapter only** in Elixir (PTY via `erlexec`, pending BEAM spike validation). Codex and Pi follow post-v1. Sub-O (mixture of models, v1.5+) adds multi-adapter support and per-actor model selection. Serves user-facing plan sessions and internal reasoning sessions. Protocol: bidirectional stream-json. Process-group termination is a v1 requirement.
+Each adapter handles spawn, prompt-passing, output capture, and lifecycle. **V1 ships Claude Code adapter only** in Elixir (pipes via `erlexec`; spike validated). Codex and Pi follow post-v1. Sub-O (mixture of models, v1.5+) adds multi-adapter support and per-actor model selection. Serves user-facing plan sessions and internal reasoning sessions. Protocol: bidirectional stream-json over stdio pipes. Process-group termination is a v1 requirement.
 
 ### Hybrid `:telemetry` + typed-event-struct is the project-wide pattern
 BEAM equivalent of the earlier Rust "hybrid `tracing` + typed-event-enum" pattern. Typed `Mnemosyne.Event.*` structs at the boundary (exhaustive-match safety for CLI display, Obsidian ingestion, TUI event rendering, E's pipeline); `:telemetry` for transport, spans, third-party integration below the boundary. Custom code bounded to minimal event definitions + a small `:telemetry` handler module. Generalizes beyond observability to any component with the same tension.
@@ -147,6 +147,15 @@ Both files are consumed by LLM phases every cycle; stale content propagates misi
 ### LLM_CONTEXT punch-list 1-3 landed (stop-gap)
 Small-fix version: `{{PROJECT}}` placeholders + work prompt substitution instructions. NOT the larger restructure, deferred/subsumed by the orchestrator. Landed in APIAnyware-MacOS and GUIVisionVMDriver.
 
+### Sub-C uses pipes-only erlexec, not PTY
+Stream-json is stdio NDJSON, not a terminal interaction. PTY is only needed for interactive TUI (slash commands, arrow keys, ANSI redraws), which "No slash commands in the harness" explicitly rules out. Pipes-only erlexec opts (`[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group, {:kill_timeout, 1}]`) cleanly drive the claude CLI end-to-end. `:stdin` bare atom is required — erlexec defaults stdin to `:null`. The Rust PTY-wrapper fallback is unnecessary.
+
+### erlexec is a C++ port program, not a NIF
+`exec-port` runs as a separate OS process handling PTY allocation, signals, and process groups outside BEAM schedulers. No NIF scheduler risks. This is why erlexec can safely use `ptrace`, `setreuid`, and process groups.
+
+### cmux hooks require `--setting-sources` for clean stream-json
+User-global cmux SessionStart hooks inject ~10KB of spurious JSON into stream-json output. `--setting-sources project,local` suppresses them. Required for all daemon-spawned claude sessions. Additionally, `--no-session-persistence` prevents cmux session-id injection.
+
 ## Sub-projects
 
 Fifteen sub-projects (fourteen active, one obsolete). Brainstorms complete: A, B, C, E, F, M (six of fourteen). Each produces a design doc at `{{PROJECT}}/docs/superpowers/specs/` and a sibling plan at `{{PROJECT}}/LLM_STATE/` (sibling plan scaffolding for F deferred until BEAM PTY spike validates sub-C approach).
@@ -155,7 +164,7 @@ Fifteen sub-projects (fourteen active, one obsolete). Brainstorms complete: A, B
 |----|-------------|-----------|--------|-------|
 | A  | Global knowledge store at user-specified path | Small-med | **done** | Design doc `specs/2026-04-13-sub-A-global-store-design.md`. Explicit vault discovery, `mnemosyne.toml` marker, `init`/`init --from`/`config use-vault`/`adopt-project` commands. **F amendment pending**: Elixir daemon caller integration. |
 | B  | Phase cycle | Medium | **done** (pending F amendment) | Design doc `specs/2026-04-12-sub-B-phase-cycle-design.md`. Produced: hard errors, no slash commands, Obsidian explorer, vault+symlinks, per-project `mnemosyne/`, embedded prompts. **F amendment pending**: PhaseRunner runs inside PlanActor; `plan-state.md` schema pruning (remove `plan-id`/`host-project`/`dev-root`, add `description`); `{{RELATED_PLANS}}` → `{{VAULT_CATALOG}}`; delete `related-plans.md`. |
-| C  | Harness adapter layer | Med-large | **done** (pending F amendment + BEAM spike) | Design doc `specs/2026-04-13-sub-C-adapters-design.md`. V1 Claude Code only. **F amendment pending**: Elixir implementation via `erlexec` or similar; tool-call boundary for in-session Queries; multi-adapter reservation for sub-O. **BEAM PTY spike** required before implementation. |
+| C  | Harness adapter layer | Med-large | **done** (pending F amendment) | Design doc `specs/2026-04-13-sub-C-adapters-design.md`. V1 Claude Code only. **F amendment pending**: Elixir implementation via `erlexec` pipes (spike validated, PTY premise inverted); tool-call boundary for in-session Queries; multi-adapter reservation for sub-O. Next: absorb P1.3 amendment task. |
 | D  | Concurrency (scope collapsed by F) | Small | not started | F's daemon commitment replaces per-plan advisory locks with OTP mailbox serialization. D's scope collapses to: daemon singleton lock + advisory file locks for external-tool coordination (Obsidian, git). Much smaller brainstorm. |
 | E  | Post-session knowledge ingestion | Medium | **done** (pending F amendment) | Design doc (`501c15c`). **F amendment pending**: Stage 5 becomes dispatch-to-experts instead of direct store write. |
 | F  | Plan hierarchy + actor model + dispatch + declarative routing | **Large** | **done** | Design doc `specs/2026-04-14-sub-F-hierarchy-design.md`. Committed: persistent BEAM daemon, two sealed actor types, two message types, `project-root` convention, path-based qualified IDs, dispatch asymmetry, vault catalog, Datalog-ish declarative routing with Level 2 fallback, Elixir runtime, Rust TUI client. Sibling plan scaffolding deferred until BEAM PTY spike. |
@@ -172,16 +181,11 @@ Fifteen sub-projects (fourteen active, one obsolete). Brainstorms complete: A, B
 
 ### Recommended sub-project ordering (post-F)
 
-Committed brainstorms: A, B, C, E, M, F → **land F's sibling plan after BEAM PTY spike** → amendment tasks for A, B, C, E, M merge into their implementation plans → remaining brainstorms D, G, H, I, N (with D dramatically collapsed) → sub-O (v1.5) → sub-P (v2).
+Committed brainstorms: A, B, C, E, M, F → **BEAM spike done (pipes validated)** → absorb sub-C amendment (P1.3: drop PTY, specify pipes-only erlexec, GenServer wrapper, NDJSON parser, telemetry boundary, cmux noise mitigation) → land F's sibling plan scaffolding (P3.1, now unblocked) → amendment tasks for A, B, C, E, M merge into their implementation plans → remaining brainstorms D, G, H, I, N (with D dramatically collapsed) → sub-O (v1.5) → sub-P (v2).
 
-Critical next step: **BEAM PTY spike (sub-C's amendment task)**. Few hours of work. If `erlexec` successfully spawns Claude Code under PTY with stream-json + sentinel detection + process-group termination, sub-C's implementation is straightforward Elixir. If it fails, fallback is a small Rust PTY-wrapper binary invoked as an Erlang Port.
+Critical next steps: **(1)** sub-C amendment absorption (P1.3) — straightforward Elixir now that pipes-only approach is validated; **(2)** P3.1 sibling plan scaffolding for F.
 
 ## Open questions
-
-### BEAM PTY story for sub-C
-Can `erlexec` cleanly spawn Claude Code with PTY I/O, stream-json bidirectional capture, sentinel string detection, and process-group termination (SIGTERM→SIGKILL)? This is the one real ecosystem unknown after the BEAM commitment. A few hours of spike work will answer it. Fallback: small Rust PTY-wrapper binary invoked from Elixir as an Erlang Port.
-
-**Owner:** sub-C's amendment task is the BEAM spike.
 
 ### Pattern-matched Elixir routing vs Erlog
 Will user-authored `defp route/2` clauses be expressive enough, or will Erlog (embedded Prolog) be needed? Unknown until real users write rules. V1 ships with pattern matching; Erlog reserved for v1.5+ if the need arises.

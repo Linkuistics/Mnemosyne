@@ -234,20 +234,50 @@ following consequences:
 - **Multi-adapter support**: reserved for sub-O; sub-C ships
   single-adapter only.
 
-**Blocking dependency**: the entire amendment is blocked on the **BEAM PTY
-spike (Priority 0)**. That spike validates whether `erlexec` can cleanly
-spawn Claude Code with PTY I/O, stream-json, sentinel detection, and
-process-group termination. Until the spike resolves, no implementation
-work on sub-C should begin.
+**BEAM PTY spike resolved (Session 10, 2026-04-15).** The spike validated
+that pipes-only `erlexec` works perfectly for driving Claude Code's
+stream-json protocol. Key findings:
+
+1. **PTY premise was wrong** — `claude -p --input-format stream-json
+   --output-format stream-json` is pure NDJSON over stdio; no
+   pseudo-terminal needed.
+2. **erlexec pipes-only works** — use `[:monitor, :stdin, {:stdout,
+   self()}, {:stderr, self()}, :kill_group]`; the `:pty + :stdin`
+   combination does NOT wire the caller's pipe to the child's real stdin.
+3. Sentinel sliding-buffer detection validated.
+4. Process-group termination validated.
+5. cmux SessionStart hooks inject ~10KB of spurious JSON — silenced with
+   `--setting-sources project,local --no-session-persistence`.
+6. erlexec is a C++ port program (not a NIF), so no BEAM scheduler risks.
+7. `{"type":"result"}` is protocol-level "turn over", orthogonal to
+   task-level sentinel.
+8. The Rust PTY-wrapper fallback is unnecessary.
+
+Spike code at `spikes/beam_pty/`.
 
 **Impact on existing backlog**: every task in `backlog.md` is written
 against the Rust implementation assumption (Cargo.toml, `src/harness/`,
-crossbeam, nix, etc.). Once the BEAM PTY spike resolves successfully, the
-backlog must be rewritten for Elixir/OTP. The task *sequence* (types →
-fixture replay → live adapter → tests → dogfood gate) and the *design
-intent* (tool profiles, process-group termination, cold-spawn latency
-gate, fixture replay parity) remain valid; only the implementation
-technology changes.
+crossbeam, nix, etc.). The backlog must be rewritten for Elixir/OTP
+before implementation begins. The task *sequence* (types → fixture replay
+→ live adapter → tests → dogfood gate) and the *design intent* (tool
+profiles, process-group termination, cold-spawn latency gate, fixture
+replay parity) remain valid; only the implementation technology changes.
+
+**Design doc §12 amendment landed (Session 11, 2026-04-15).** The
+authoritative Elixir/BEAM projection now lives at
+`{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
+§12. It covers: the supersession table (§12.1), what survives verbatim
+(§12.2), the normative `:exec.run/2` spawn path (§12.3), the two
+protocol signals (protocol-level `turn_complete:<subtype>` vs task-level
+sentinel) (§12.4), the new **tool-call boundary for in-session Queries**
+(§12.5 — F-introduced contract C must satisfy), the `:telemetry` +
+typed-struct observability re-cast (§12.6), multi-adapter reservation
+to sub-O (§12.7), the dependency footprint (`erlexec` + `jason`, no
+PTY lib, §12.8), resolved and new open questions (§12.9 — Q3/Q4
+resolved by the spike, Q6/Q7 newly surfaced), backlog rewrite guidance
+(§12.10), cross-sub-project impact (§12.11), and an evolution log
+(§12.12). **§12 is the starting point for the rewritten task list in
+`backlog.md`.**
 
 ## Open questions (implementation-level)
 
@@ -263,15 +293,35 @@ implementation task with an explicit resolution method.
    Security implications differ. Resolution: behavioural test against
    each candidate touching a tmpdir file. Resolves Task 3.
 3. **Whether `--print "<prompt>"` accepts a prompt arg alongside
-   `--input-format stream-json`.** If not, the initial prompt is
-   delivered as the first stdin envelope. Resolution: behavioural test
-   with both shapes. Resolves Task 3.
+   `--input-format stream-json`.** **RESOLVED by the BEAM PTY spike
+   (Session 10).** With `--input-format stream-json`, the initial prompt
+   must be delivered as the first stdin envelope via `:exec.send/2`. The
+   CLI-arg form errors with `Input must be provided either through stdin
+   or as a prompt argument when using --print`. Lock: every prompt —
+   including the initial one — ships as an NDJSON user envelope on stdin.
 4. **Exact stream-json field names** (`type`, `subtype`, `content`,
-   `tool_use`, `is_error`). Resolution: capture real session JSON,
-   commit as fixtures, lock parser shapes. Resolves Task 3.
+   `tool_use`, `is_error`). **RESOLVED by the BEAM PTY spike (Session 10).**
+   Canonical samples captured in `spikes/beam_pty/results/full-run.log`
+   covering `system/init`, `rate_limit_event`, `assistant/thinking`,
+   `assistant/text`, and `result/success`. Copy into
+   `test/fixtures/harness/captured-stream-json/` during implementation
+   Task 3 and lock the Elixir parser module against them.
 5. **Warm-pool reset mechanism** (structured envelope vs `/clear` text
    vs degraded single-use). Resolution: §7.4 three-check spike protocol.
    **Conditional** — only fires if the C-1 gate trips.
+6. **Tool-call boundary mechanism for in-session Queries** (new, from
+   design doc §12.5). How are Mnemosyne-injected tools (`ask_expert`,
+   `dispatch_to_plan`, `read_vault_catalog`) exposed to a running claude
+   session? Candidates: (a) MCP server on Unix socket with
+   `--mcp-config`; (b) stdin-side tool-definition preamble; (c)
+   plugin-shipped tool shims. Resolution: focused spike at the start of
+   C's implementation phase before GenServer wiring is finalised.
+7. **`exec-port` supervision** (new). `erlexec` runs `exec-port` as a
+   separate OS process. What happens if `exec-port` crashes while live
+   sessions exist? Resolution: document expected behaviour — sessions
+   are not persistent by design, so a restart drops them and plans
+   restart their current phase on daemon restart. Capture the call
+   chain in C's implementation phase memory.
 
 ## Risk watch list
 
