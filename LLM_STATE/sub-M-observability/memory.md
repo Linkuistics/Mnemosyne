@@ -183,6 +183,46 @@ rewrite tasks to target Elixir/OTP idioms (`:telemetry`, `prom_ex`,
 GenServer-based ring buffers, etc.) while preserving the same
 observability goals.
 
+### C's rewritten design doc as the concrete Elixir exemplar
+
+Sub-C's design doc (`docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`)
+was fully rewritten in Session 11 for Elixir/BEAM and now provides the
+first concrete implementation of M's `:telemetry` + typed struct pattern.
+The amendment session should use C's emission pattern as the template
+other sub-projects will follow:
+
+- **§3.3** defines `Mnemosyne.Event.*` typed structs (`HarnessOutput`,
+  `SessionLifecycle`, `SpawnLatencyReport`, `SessionExitStatus`,
+  `HarnessError`) with `@enforce_keys` + `defstruct` — the canonical
+  shape for M's sealed event set in Elixir.
+- **§7.2** shows the three-way parallel emission pattern for
+  `%SpawnLatencyReport{}`: consumer info message + `:telemetry.execute/3`
+  under `[:mnemosyne, :harness, :claude_code, :spawn_latency]` + staging
+  JSON file — this is the staged migration path M owns.
+- **§11.4** states the contract: C emits `:telemetry.execute/3` at every
+  boundary (spawn, first chunk, init event, turn boundary, tool-use,
+  tool-result, terminate, exit) and feeds M's event-tail ring buffer.
+
+### B's rewritten design doc as the concrete phase-lifecycle producer contract
+
+Sub-B's design doc (`docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`)
+was fully rewritten in Session 12 for Elixir/BEAM. §4.4 now defines seven
+concrete `%PhaseLifecycle{}` typed event variants that M must consume as
+part of its sealed `Mnemosyne.Event.*` struct set:
+
+1. `%PhaseLifecycle{kind: :started}` — emitted at `run_phase/4` step 5
+2. `%PhaseLifecycle{kind: :exited_clean}` — emitted at step 11
+3. `%PhaseLifecycle{kind: :reflect_hook_fired}` — emitted at step 12
+4. `%PhaseLifecycle{kind: :interrupted}` — emitted at §3.4 step 5
+5. `%PhaseLifecycle{kind: :executor_failed}` — emitted on error branches
+6. `%PhaseLifecycle{kind: :takeover_offered}` — emitted at §3.4 step 6
+7. `%PhaseLifecycle{kind: :prior_interrupt_surfaced}` — emitted at §3.2 Scenario A
+
+B also forwards `%HarnessOutput{}` and `%SessionLifecycle{}` events from C.
+Combined with C's §11.4 telemetry contract (harness adapter side), M's
+amendment now has concrete producer-side contracts from both B and C as
+input for defining the sealed event struct set in Elixir.
+
 ## Open questions
 
 These do not block implementation but should be resolved during v1 build.

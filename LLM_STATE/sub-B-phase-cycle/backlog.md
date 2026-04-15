@@ -5,14 +5,26 @@ doc at
 `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`.
 Consult the spec before starting any task.
 
-Tasks are listed in approximately recommended order. **Task 0 (the Obsidian +
-symlinks validation spike) PASSED on both macOS and Linux** in Session 5
-(2026-04-13) of the parent orchestrator plan, executed end-to-end via the
-`guivision` CLI; evidence at `tests/fixtures/obsidian-validation/results/{macos,linux}/`
-(commit `98ef7db`). With Task 0 cleared, downstream tasks are unblocked. The
-ordering follows the dependency chain: core types → plan-state → staging →
-executors → runner → drivers → runtime → dogfood. The work phase picks the
-best next task with input from the user.
+**Design doc rewritten inline for Elixir/BEAM.** In Session 12
+(2026-04-15) of the parent orchestrator plan, the three pending amendment
+tasks (Sub-C contracts, LLM_CONTEXT 2026-04 overhaul, BEAM pivot) were
+absorbed inline across §1–§6 of the design doc, following the sub-C
+precedent (no supersede layer). The design is now Elixir-native with a
+four-phase cycle (`work → reflect → compact → triage` with conditional
+compact), `PhaseRunner` hosted inside a sub-F `PlanActor` GenServer,
+`plan-state.md` schema pruned per sub-F, `{{VAULT_CATALOG}}` placeholder
+replacing `{{RELATED_PLANS}}`, `pre-work.sh` hook, and F's
+`DispatchProcessor` / `QueryProcessor` as phase-exit hooks on non-compact
+phases. **The implementation task list below (everything from "Define
+core abstractions and types" onwards) is still written against the
+pre-pivot Rust framing and must be rewritten against the new design
+doc before any implementation starts.** That rewrite is the next
+gate task.
+
+**Task 0 (the Obsidian + symlinks validation spike) PASSED on both
+macOS and Linux** in Session 5 (2026-04-13). Evidence at
+`tests/fixtures/obsidian-validation/results/{macos,linux}/` (commit
+`98ef7db`). Implementation blockers cleared.
 
 ## Task Backlog
 
@@ -63,91 +75,77 @@ best next task with input from the user.
   dismissed at VM setup time.
 
 ### Absorb Sub-C trait amendments into B's design + types `[types]` `[amendment]`
-- **Status:** not_started
+- **Status:** done (Session 12, 2026-04-15)
 - **Dependencies:** Task 0
-- **Description:** Sub-project C's brainstorm (Session 6 of the parent
-  orchestrator plan, 2026-04-13) produced **four additive amendments to
-  B's `HarnessSession` trait and `OutputChunkKind` enum, plus one
-  executor-level requirement**, all forced by C's locked Q1 decision
-  (bidirectional `stream-json`) and two post-write user clarifications
-  (disambiguating "no callback channel" as control-only and separating
-  task-level from protocol-level completion). All five changes post-date
-  B's brainstorm and must be absorbed *before* the "Define core abstractions
-  and types" task is started so that types are defined in their amended
-  shape from the outset rather than being rewritten mid-implementation.
+- **Description:** Sub-project C's design doc was **fully rewritten in
+  Session 11 (2026-04-15) for Elixir/BEAM** — an inline rewrite, not a
+  supersede layer. C's §11.1 now defines concrete B-C contracts that
+  replace the original five Rust-era amendments from Session 6.
 
-  **The five amendments** (sources: `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
-  commits `71fd307` and `b1a8cea`; cross-references in
-  `{{DEV_ROOT}}/Mnemosyne/LLM_STATE/mnemosyne-orchestrator/memory.md`
-  under the "Harness adapter layer" and "No slash commands inside the
-  harness" entries):
+  **Amendments 1–3 eliminated.** The Rust trait-object plumbing
+  (`&mut self` → `&self`, `Box<dyn>` → `Arc<dyn>`, `Send + Sync`)
+  has no BEAM analogue. B consumes the session GenServer via
+  `attach_consumer/2` and `handle_info/2`.
 
-  1. **`HarnessSession::send_user_message(&self, text)`** — new trait
-     method. TUI forwards user-typed messages into an in-flight session
-     mid-turn via this call. Required by C's Q1 (bidirectional stream-json
-     supports reading model output *and* forwarding user messages
-     simultaneously, no PTY needed).
-  2. **`HarnessSession` methods change from `&mut self` to `&self` with
-     `Send + Sync` bound.** The `ClaudeCodeSession` actor owns the only
-     mutable state; the trait surface is now shareable across threads.
-     This is what lets the executor clone an `Arc` to hand one handle to
-     the output drainer and another to the input forwarder.
-  3. **`LlmHarnessExecutor` storage changes from `Box<dyn HarnessSession>`
-     to `Arc<dyn HarnessSession>`** and gains a `user_input_sender()`
-     method that the TUI uses to wire user-typed messages into the
-     session. The executor now spawns **two threads** per session: an
-     output-drainer that reads `OutputChunk`s off the session and pushes
-     them to `output_tx`, and an input-forwarder that reads user messages
-     off a `crossbeam-channel` receiver and calls `send_user_message` on
-     the session.
-  4. **`OutputChunkKind` gains a `SessionLifecycle` variant** with
-     documented stable text formats `"ready"`, `"turn_complete:<subtype>"`,
-     and `"exited:<status>"`. This is the protocol-level observation
-     channel surfacing Claude Code's `result` events and session
-     state transitions without violating the "no control channel"
-     rule (observation is allowed; control is forbidden). See
-     memory.md "No slash commands inside the harness" for the
-     control-vs-observation distinction.
-  5. **`LlmHarnessExecutor` runs `Stdout` chunks through a configurable
-     completion-sentinel matcher with sliding-buffer detection.** This
-     is the task-level completion signal (distinct from protocol-level
-     `SessionLifecycle::TurnComplete`) — each phase prompt ends with
-     "when finished say READY FOR THE NEXT PHASE" and the executor
-     watches assistant-text output for that sentinel. Sentinel
-     detection lives in B (not C) because sentinels are coupled to
-     phase prompts (which B owns) and the mechanism is harness-agnostic.
-     The matcher must be sliding-buffer based (sentinel may span
-     multiple chunks) and configurable per phase. **Validated by the
-     BEAM PTY spike** (Session 10, 2026-04-15; `spikes/beam_pty/`):
-     sliding-buffer with window bounded to `sentinel_size - 1` bytes
-     works across single-chunk, split, drip, false-prefix, and
-     false-overlap cases. See memory.md for details.
+  **Two substantive requirements survive** (source:
+  `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
+  §11.1):
+
+  1. **`%Mnemosyne.Event.SessionLifecycle{}` is a consumed typed event.**
+     B's phase-cycle machine pattern-matches on
+     `%SessionLifecycle{transition: :ready}`,
+     `%SessionLifecycle{transition: {:turn_complete, _}}`, and
+     `%SessionLifecycle{transition: {:exited, _}}` as the protocol-level
+     signals. These are **distinct from task-level completion signals**
+     (see requirement 2).
+  2. **B's executor runs a sliding-buffer sentinel matcher on every
+     `%HarnessOutput{kind: :stdout}` event** to detect task-level
+     completion. Sentinels are per-phase, defined in the phase prompt
+     files. When the matcher fires, B's executor emits an internal
+     `{:phase_completion_detected, sentinel}` message that the phase
+     state machine consumes as the trigger to wind down the session and
+     transition phases. Sentinel detection lives in B (not C) because
+     sentinels are coupled to phase prompts (which B owns) and the
+     mechanism is harness-agnostic. The matcher must be sliding-buffer
+     based (sentinel may span multiple chunks) and configurable per
+     phase. **Validated by the BEAM PTY spike** (Session 10, 2026-04-15;
+     `spikes/beam_pty/`): sliding-buffer with window bounded to
+     `sentinel_size - 1` bytes works across single-chunk, split, drip,
+     false-prefix, and false-overlap cases. See memory.md for details.
 
   **Work to perform.** (a) Update `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md`
-  §2.2 (trait definitions) and §4.1 (`HarnessAdapter` / `HarnessSession`
-  trait shape) to record all five amendments inline, with a dated note
-  pointing at C's design doc as the origin. (b) Adjust the downstream
-  "Define core abstractions and types" task description so that its
-  type list includes the amended `OutputChunkKind::SessionLifecycle`
-  variant, `HarnessSession` surface (`&self` + `Send + Sync` +
-  `send_user_message`), and the executor-level sentinel-matcher type.
-  (c) If any other task in this backlog references `Box<dyn
-  HarnessSession>` or the old `&mut self` shape, update it consistently.
-  (d) Add a note to the `PhaseRunner::run_phase` task (and/or the
-  `LlmHarnessExecutor` task if separate) that the executor spawns two
-  threads per session and owns the sentinel matcher.
+  §2.2 and §4.1 to record the two surviving requirements inline, with a
+  dated note pointing at C's §11.1 as the origin. Remove or supersede
+  references to the eliminated Rust-era amendments (1–3). (b) Adjust the
+  downstream "Define core abstractions and types" task description so
+  that its type list includes `%Mnemosyne.Event.SessionLifecycle{}` as a
+  consumed event and the executor-level sentinel-matcher module.
+  (c) Add a note to the `PhaseRunner::run_phase` task (and/or the
+  `LlmHarnessExecutor` task if separate) that the executor owns the
+  sentinel matcher and emits `{:phase_completion_detected, sentinel}`.
+  (d) Ensure all references to B's session consumption use the BEAM-native
+  `attach_consumer/2` + `handle_info/2` pattern, not the eliminated
+  Rust trait-object shapes.
 
   **No runtime code** — this task is spec + backlog editing only. It
   exists as a gate so the downstream implementation tasks are written
   against the correct contract. Acceptance: the spec and backlog are
-  internally consistent with C's design doc and with orchestrator
+  internally consistent with C's §11.1 contracts and with orchestrator
   `memory.md`, verified by a manual re-read of §2.2, §4.1, and every
-  task description that touches `HarnessSession` / `OutputChunk` /
-  `LlmHarnessExecutor`.
-- **Results:** _pending_
+  task description that touches session consumption, `SessionLifecycle`,
+  or sentinel detection.
+- **Results:** Absorbed inline into the design doc's Session-12 rewrite.
+  §4.1 now carries the full sub-C consumption contract (Requirements 1
+  and 2) with the `%Mnemosyne.Event.SessionLifecycle{}` pattern-match
+  surface and the sliding-buffer sentinel matcher requirement. The
+  Rust-era Amendments 1–3 are explicitly retired there; Appendix A Q1
+  (post-write clarification) records the control-vs-observation
+  disambiguation. §2.3.4 documents `LlmHarnessExecutor`'s
+  `attach_consumer/2` + `handle_info/2` consumption loop. Session-12
+  rewrite spans the whole doc; no supersede layer.
 
 ### Absorb LLM_CONTEXT 2026-04 overhaul into B's design + types `[amendment]`
-- **Status:** not_started
+- **Status:** done (Session 12, 2026-04-15)
 - **Dependencies:** Task 0
 - **Description:** LLM_CONTEXT's upstream shape shifted after B's
   brainstorm: it now ships a four-phase cycle (work → reflect →
@@ -242,10 +240,22 @@ best next task with input from the user.
   related-plans, or the runner state machine. Session-log entries in
   the orchestrator plan already use the new ISO 8601 format, which is
   a ground truth to verify against.
-- **Results:** _pending_
+- **Results:** Absorbed inline into the design doc's Session-12 rewrite.
+  All seven LLM_CONTEXT 2026-04 overhaul items are now load-bearing in
+  the design: (a) four-phase cycle in `PhaseRunner` and `PlanState`
+  (§2.3.2, §2.3.3, §3.3); (b) phase-composition shared-file + additive
+  override pattern (§2.3.5, §2.5); (c) `fixed-memory/memory-style.md`
+  read by both reflect and compact (§2.5, explicit invariant); (d)
+  `pre-work.sh` hook (§2.3.3 step 2, module `Mnemosyne.PreWorkHook`);
+  (e) `{{VAULT_CATALOG}}` placeholder (§2.4 table + §2.3.5); (f)
+  `related-plans.md` **deleted entirely** (§6 sub-G requirements call
+  this out); (g) ISO 8601 session-log timestamps + latest-session.md
+  write-then-append lifecycle (§2.7). Sub-G owns the user-facing
+  rename and `related-plans.md` deletion during migration. Appendix A
+  Q18 records the seven-point absorption summary.
 
 ### Absorb BEAM pivot into B's design, spec, and backlog `[amendment]`
-- **Status:** not_started
+- **Status:** done (Session 12, 2026-04-15)
 - **Dependencies:** Task 0
 - **Description:** The orchestrator's Session 9 committed Mnemosyne to a
   persistent BEAM daemon (Elixir/OTP), replacing the original Rust
@@ -288,6 +298,97 @@ best next task with input from the user.
   written against the correct Elixir/OTP contract. Acceptance: the spec
   and backlog contain zero stale Rust references and are internally
   consistent with the BEAM daemon architecture.
+- **Results:** Design doc fully rewritten inline for Elixir/BEAM in
+  Session 12 (2026-04-15), mirroring the sub-C precedent (no
+  supersede layer). The Rust runtime substrate (traits, `Arc<dyn>`,
+  `tokio`, `ratatui` as process main loop, `include_str!`,
+  `serde_yaml`, `fs2`, `crossbeam-channel`, `nix`) has been replaced
+  wholesale with Elixir/OTP equivalents (`@behaviour`, GenServer
+  consumption via `attach_consumer/2`, PlanActor mailbox,
+  `@external_resource` + `File.read!/1`, `yaml_elixir`, daemon
+  singleton flock, `:kill_group`, sub-M telemetry). `PhaseRunner` is
+  now a pure module called from inside sub-F's `PlanActor`
+  GenServer; phase transitions arrive as `{:run_phase, _}` messages
+  (§2.3.3, §3.3, §4.5). `plan-state.md` schema pruned per sub-F
+  (§2.3.2): `plan-id`, `host-project`, `dev-root` removed;
+  `description:` (≤120 chars, hard-capped) added; `mnemosyne-pid` →
+  `daemon-pid`; `compact-baseline` added. `{{RELATED_PLANS}}` →
+  `{{VAULT_CATALOG}}` (§2.4); `related-plans.md` deleted outright.
+  Separate Rust TUI client binary replaces the in-process ratatui
+  driver (§1.2, Appendix A Q9). `DispatchProcessor` and
+  `QueryProcessor` added as phase-exit hooks on work/reflect/triage
+  (§2.3.3 step 13, §3.5, §4.3). Appendix A Q20 carries the full
+  Rust→BEAM translation table and weaves in the BEAM PTY spike
+  findings (pipes-only erlexec, sliding-buffer sentinel matcher
+  validation, two-completion-signals orthogonality). **The
+  implementation task list below still carries pre-pivot Rust task
+  descriptions**; the follow-up gate task ("Rewrite downstream
+  implementation tasks") is the next thing to land.
+
+### Rewrite downstream implementation tasks against Session-12 design doc `[amendment]`
+- **Status:** not_started
+- **Dependencies:** (the three amendment tasks above, all now done)
+- **Description:** The three amendment tasks landed a fresh
+  Elixir/BEAM + four-phase cycle + sub-F-integrated design doc,
+  but every implementation task from "Define core abstractions and
+  types" onwards still describes Rust types, `include_str!`,
+  `serde_yaml`, `gray_matter`, `ratatui`, `fs2`, `tokio`, `Box<dyn>`,
+  `InteractionDriver`, the `--ipc` client mode, the per-plan
+  advisory lock stub, and the previous three-phase cycle. Rewrite
+  every downstream task in this backlog so it matches the Session-12
+  design doc:
+
+  1. Replace Rust type lists with Elixir struct/module lists
+     (`Mnemosyne.PlanState`, `Mnemosyne.PlanContext`,
+     `Mnemosyne.PhaseRunner`, `Mnemosyne.StagingDirectory`,
+     `Mnemosyne.PhaseExecutor` behaviour + three implementors,
+     `Mnemosyne.Substitution`, `Mnemosyne.Prompts`,
+     `Mnemosyne.Sentinel.SlidingBuffer`, `Mnemosyne.PreWorkHook`,
+     `Mnemosyne.CopyBackReport`).
+  2. Replace `include_str!` with `@external_resource` +
+     `File.read!/1` at compile time; replace vendor list's
+     `backlog-plan.md` and `create-a-multi-session-plan.md` with
+     `phases/{work,reflect,compact,triage}.md` +
+     `fixed-memory/{coding-style,coding-style-rust,memory-style}.md` +
+     `create-plan.md`.
+  3. Replace `serde_yaml` + `gray_matter` with `yaml_elixir` + a
+     direct `---`-boundary split.
+  4. Delete all tasks that implement the `InteractionDriver` trait,
+     `HeadlessDriver`, `IpcDriver`, `RatatuiDriver` — the TUI is
+     now sub-F's separate Rust client binary, not a B artefact.
+  5. Delete the per-plan advisory lock stub task — sub-F's
+     daemon-singleton lock (sub-D collapsed scope) replaces it.
+  6. Delete the "Wire the full startup sequence" task — daemon
+     startup is sub-F's scope; B's entry point is now the PlanActor
+     `handle_info/2` dispatch for `{:run_phase, _}`.
+  7. Rewrite the `PhaseRunner::run_phase` task as "Implement
+     `Mnemosyne.PhaseRunner.run_phase/4`" with the 13-step flow
+     from §2.3.3 including compact-trigger check, `pre-work.sh`
+     invocation, session-log append, `DispatchProcessor` and
+     `QueryProcessor` phase-exit hooks (non-compact phases only),
+     and `ReflectExitHook` non-blocking invocation.
+  8. Rewrite the `LlmHarnessExecutor` task with the
+     `attach_consumer/2` + `handle_info/2` consumption loop and the
+     sliding-buffer sentinel matcher, against sub-C's
+     `Mnemosyne.HarnessAdapter` behaviour.
+  9. Add new tasks for `Mnemosyne.PreWorkHook` and
+     `Mnemosyne.Sentinel.SlidingBuffer` (both new modules surfaced
+     by the Session-12 rewrite).
+  10. Update the sub-M adoption task to emit `Mnemosyne.Event.*`
+      typed structs via `:telemetry` (not `tracing::instrument` +
+      `MnemosyneEvent` enum).
+  11. Update the dogfood task to reference the Session-12 design
+      doc layout (PlanActor-hosted runner, daemon start via sub-F,
+      two-plan cutover).
+  12. Update the live smoke test task to tag tests `:live` (ExUnit
+      tag) instead of CI-gated Rust test discovery.
+
+  This is **backlog editing only** — no runtime code. The
+  acceptance criterion: every downstream task description is
+  internally consistent with the Session-12 design doc and with
+  the `{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`
+  rewrite. No stale Rust crate names, trait shapes, or three-phase
+  references remain in task descriptions.
 - **Results:** _pending_
 
 ### Define core abstractions and types `[types]`

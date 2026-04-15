@@ -246,34 +246,62 @@ real integrations replace the stubs as sibling sub-projects land.
 These are the open questions listed in §5.5 of the spec. Others may surface
 during implementation and should be added here.
 
-## BEAM pivot (Session 9 orchestrator decision)
+## Design doc fully rewritten inline for Elixir/BEAM (Session 12)
 
-The orchestrator's Session 9 committed Mnemosyne to a **persistent BEAM
-daemon (Elixir/OTP)**, replacing the original Rust single-process design.
-This fundamentally changes sub-B's implementation language, concurrency
-model, and architectural assumptions:
+The three pending amendment tasks (sub-C contracts, LLM_CONTEXT 2026-04
+overhaul, BEAM pivot) were **absorbed inline** into the design doc in
+Session 12 (2026-04-15) of the orchestrator plan, following the sub-C
+precedent. No supersede layer — the Rust framing is replaced wholesale,
+and the original decisions survive as Q1–Q17 in Appendix A with
+Session-12 correction notes; new Q18 (LLM_CONTEXT overhaul), Q19 (sub-F
+pivot), and Q20 (BEAM pivot + BEAM PTY spike) record the amendment
+substance.
 
-- **Language/runtime:** Rust → Elixir/OTP on the BEAM VM.
-- **Concurrency model:** tokio tasks + threads → GenServers + OTP
-  supervision trees. PhaseRunner runs inside a `PlanActor` GenServer;
-  phase transitions arrive as `{:run_phase, _}` messages.
-- **TUI:** No longer the process main loop (ratatui). The TUI is a
-  daemon client that connects to the running daemon.
-- **`plan-state.md` schema pruning:** Remove `plan-id`, `host-project`,
-  `dev-root` fields; add `description:` field.
-- **Placeholder rename:** `{{RELATED_PLANS}}` → `{{VAULT_CATALOG}}`.
-- **`related-plans.md` deleted** — vault catalog replaces it.
-- **Phase-exit hooks:** DispatchProcessor and QueryProcessor run as
-  phase-exit hooks (not inline pipeline stages).
+**Key design-doc anchors for implementation:**
 
-The backlog's "Absorb BEAM pivot" amendment task tracks the concrete
-work to rewrite task descriptions, spec references, and type definitions
-against the new Elixir/OTP architecture. All Rust-specific references
-(crates, traits, `include_str!`, `serde_yaml`, `ratatui`, `tokio`,
-`fs2`, etc.) must be replaced with their Elixir/OTP equivalents. The
-six core abstractions survive conceptually but change form (traits →
-behaviours, structs → typed maps/structs, `Arc<dyn ...>` → GenServer
-references, etc.).
+- §2.3.2 — `plan-state.md` schema pruned (no `plan-id`, `host-project`,
+  `dev-root`); `description:` (≤120 chars, hard-capped) required;
+  `mnemosyne-pid` → `daemon-pid`; `compact-baseline` sticky integer
+  added.
+- §2.3.3 — `PhaseRunner.run_phase/4` 13-step flow with `pre-work.sh`
+  invocation (step 2), compact-trigger branching (step 1 exception),
+  session-log append (step 9), `ReflectExitHook` non-blocking fire
+  (step 12), `DispatchProcessor` + `QueryProcessor` phase-exit hooks
+  on non-compact phases (step 13).
+- §2.3.4 — `PhaseExecutor` `@behaviour` with three implementors.
+  `LlmHarnessExecutor` consumes sub-C's session GenServer via
+  `attach_consumer/2` + `handle_info/2` + sliding-buffer sentinel
+  matcher.
+- §2.3.5 — `StagingDirectory.render/4` with five placeholders
+  (`{{DEV_ROOT}}`, `{{PROJECT}}`, `{{PLAN}}`, `{{PROMPTS}}`,
+  `{{VAULT_CATALOG}}`). `{{RELATED_PLANS}}` retired.
+- §2.5 — `Mnemosyne.Prompts` module with `@external_resource` +
+  `File.read!/1` compile-time embedding. Vendor list is
+  `phases/{work,reflect,compact,triage}.md` +
+  `fixed-memory/{coding-style,coding-style-rust,memory-style}.md` +
+  `create-plan.md`. Pre-overhaul filenames `backlog-plan.md` and
+  `create-a-multi-session-plan.md` **must not** appear.
+- §2.7 — Session-log + `latest-session.md` lifecycle (ISO 8601 UTC
+  with seconds; write-then-append pattern; LLM phases never read
+  the session log).
+- §4.1 — Full sub-C `Mnemosyne.HarnessAdapter` consumption contract.
+- §4.2 — `Mnemosyne.ReflectExitHook` behaviour for sub-E.
+- §4.3 — `DispatchProcessor` / `QueryProcessor` phase-exit contract
+  (F-owned, B invokes on non-compact phases only).
+
+**The implementation task list in `backlog.md` still carries the
+pre-pivot Rust framing.** A follow-up backlog gate task ("Rewrite
+downstream implementation tasks against Session-12 design doc")
+tracks the task-description rewrite so downstream implementation
+starts against the correct Elixir/BEAM contracts.
+
+**The six core abstractions survive conceptually but change form**:
+Rust traits → Elixir behaviours; Rust structs → Elixir structs (no
+`@enforce_keys` surprises); `Box<dyn PhaseExecutor>` → `@behaviour
+Mnemosyne.PhaseExecutor`; `PhaseRunner` owning its own event channel
+→ `PhaseRunner` as a pure module called from inside `PlanActor` with
+an `emit_fn` closure; `InteractionDriver` + three drivers deleted
+entirely (TUI is sub-F's separate Rust client binary).
 
 ## Sentinel sliding-buffer matcher: validated by spike
 

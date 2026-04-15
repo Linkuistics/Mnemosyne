@@ -1,58 +1,114 @@
-# Sub-project B — Phase Cycle Reimplementation in Rust
+# Sub-project B — Phase Cycle Reimplementation in Elixir
 
-> Brainstormed 2026-04-12 via the `superpowers:brainstorming` skill. Every
-> architectural decision recorded here was presented to the user and approved
-> at a decision point during that session. The full trail is in Appendix A.
+> Brainstormed 2026-04-12 via the `superpowers:brainstorming` skill. Design
+> rewritten inline in Session 12 (2026-04-15) of the `mnemosyne-orchestrator`
+> plan to absorb three upstream shifts:
+> (a) LLM_CONTEXT's 2026-04 four-phase overhaul,
+> (b) sub-F's persistent BEAM daemon + actor commitment (Session 9),
+> (c) the BEAM PTY spike findings (Session 10) that validate pipes-only
+> `erlexec` and the sliding-buffer sentinel matcher.
+> The original Rust framing has been replaced wholesale; history is
+> preserved in Appendix A's Decision Trail, not as a supersede layer.
 
 ---
 
 ## Overview
 
-Sub-project B designs the **long-running process model**, **phase cycle state
-machine**, **executor abstractions**, **placeholder substitution mechanism**,
-and **plan-state file format** that together replace
-`{{DEV_ROOT}}/LLM_CONTEXT/run-backlog-plan.sh` with Rust code owned by
-Mnemosyne. It is the sub-project through which the parent-process inversion
-becomes real: after B ships, the user runs `mnemosyne` and Mnemosyne becomes
-the parent process that spawns Claude Code (or other harnesses) as child
-sessions via sub-project C's adapter layer.
+Sub-project B designs the **four-phase cycle state machine**, **executor
+behaviour**, **staging directory mechanism**, **placeholder substitution**,
+and **`plan-state.md` file format** that together replace
+`LLM_CONTEXT/run-plan.sh` with Elixir code owned by the Mnemosyne daemon.
+
+B's code runs **inside a `PlanActor` GenServer** (sub-project F). The
+daemon's OTP supervision tree spawns one PlanActor per opened plan; B's
+`PhaseRunner` state machine is the actor's core phase-transition logic.
+Attached clients (the Rust TUI, the Obsidian plugin in v1.5+, test
+harnesses) send `{:run_phase, next_phase}` messages over the client
+socket protocol; the PlanActor routes them to `PhaseRunner`, which
+executes the full phase and emits typed `%Mnemosyne.Event.*{}` events
+back across the mailbox to every attached consumer.
 
 The design is:
 
-- A **long-running Mnemosyne process** that the user starts once per work
-  session. Mnemosyne holds an open plan, hosts every phase execution, and
-  drives the harness as a pure worker. The user never types at the harness
-  directly; all commands flow through Mnemosyne's TUI.
-- A **pluggable `PhaseExecutor` trait** with three concrete implementors in
-  v1 — `LlmHarnessExecutor`, `ManualEditorExecutor`, `FixtureReplayExecutor`.
-  Every phase execution, LLM- or human-driven, flows through the same
-  `PhaseRunner::run_phase()` chokepoint, making the co-equal-actors principle
-  a type-level guarantee rather than a documentation promise.
+- A **four-phase cycle**: `work → reflect → compact → triage → work`.
+  Compact is **conditionally skipped** when `wc -w memory.md <=
+  compact-baseline + HEADROOM` (global constant, initially 1500 words).
+  Reflect always writes `compact` as its nominal next phase; the runner
+  decides at compact-entry whether to invoke the compact executor or
+  transition directly to triage. The LLM never decides "is compaction
+  needed." Compact is **strictly lossless** — only reflect may prune
+  memory.md content.
+- A **`PhaseRunner` state machine** embedded in the PlanActor. Phase
+  transitions arrive as `{:run_phase, _}` messages; the runner performs
+  its 13-step `run_phase/4` flow (validate, render staging, update
+  state, emit events, invoke executor, copy back, compute next,
+  persist, emit exit, fire reflect hook, run dispatch/query processors,
+  cleanup).
+- A **pluggable `PhaseExecutor` behaviour** with three concrete
+  implementors in v1 — `LlmHarnessExecutor`, `ManualEditorExecutor`,
+  `FixtureReplayExecutor`. Every phase execution flows through the same
+  runner chokepoint, making the co-equal-actors principle a type-level
+  guarantee rather than a documentation promise.
 - A **staging directory mechanism** that pre-renders plan files with
-  `{{DEV_ROOT}}`, `{{PROJECT}}`, `{{PLAN}}`, and `{{PROMPTS}}` placeholders
-  resolved to absolute paths before the harness sees them. This closes the
-  substitution gap recorded in the seed plan's memory as "the explicit v1
-  failure mode to design out."
-- A **plan-state file** (`plan-state.md`, markdown with YAML frontmatter)
-  that replaces `phase.md` and carries enough state for crash recovery,
-  exactly-once ingestion firing, and Dataview-backed multi-plan dashboards.
-- A **Ratatui TUI** as the v1 user interface, with a stable
-  `InteractionDriver` boundary that a future Obsidian plugin client
-  (sub-project K) can attach to without core rework.
-- A **dedicated Mnemosyne-vault** under the dev root, holding global
-  knowledge natively, hosting runtime state natively, and referencing
-  per-project plan directories via symlinks. The vault is an Obsidian vault
-  by committed design — every file format, directory layout, and
-  cross-reference decision targets Obsidian specifically.
+  `{{DEV_ROOT}}`, `{{PROJECT}}`, `{{PLAN}}`, `{{PROMPTS}}`, and
+  `{{VAULT_CATALOG}}` placeholders substituted to absolute paths (or, for
+  the catalog, to the vault catalog's current content) before the
+  executor sees them. Copy-back on clean exit propagates edits back to
+  the canonical plan directory with reverse substitution on `.md` files.
+- A **`plan-state.md` file** (markdown with YAML frontmatter) that
+  replaces the legacy `phase.md` single-word format. Schema is pruned
+  per sub-F's coordination requirement — fields derivable from the
+  filesystem path (`plan-id`, `host-project`, `dev-root`) are **not**
+  stored; `description:` (≤120 characters, hard-capped) is required;
+  `mnemosyne-pid` is renamed `daemon-pid` to reflect the BEAM runtime.
+- **Phase composition** via shared phase files + optional per-plan
+  overrides: a phase prompt is produced by taking the embedded
+  `phases/<phase>.md` and appending the plan's optional
+  `prompt-<phase>.md`, then substituting placeholders. Overrides are
+  **additive only** — plans cannot replace the shared phase content.
+- An **optional `pre-work.sh` executable hook** at `<plan>/pre-work.sh`.
+  Invoked from the project root before every work phase (never before
+  reflect, compact, or triage), after the defensive
+  `rm -f latest-session.md` cleanup. Non-zero exit aborts the whole
+  cycle as a hard error.
+- **Phase-exit hooks owned by sub-F**: `DispatchProcessor` and
+  `QueryProcessor` run after `work`, `reflect`, and `triage`
+  (**not** after `compact` — compact is strictly lossless memory
+  rewriting, and files outside `memory.md` are out of its scope). Both
+  processors read `<plan>/dispatches.yaml` and `<plan>/queries.yaml`
+  respectively, route entries via F's router, and delete the files on
+  full success.
+- **A post-reflect ingestion hook** for sub-project E. B fires E's
+  pipeline non-blockingly on clean reflect exit, with exactly-once
+  semantics via the `ingestion-fired` frontmatter flag.
+- **ISO 8601 UTC-with-seconds session-log timestamps**. `latest-session.md`
+  is written by the LLM during the work phase; the runner appends it to
+  `session-log.md` after a clean work exit; the defensive
+  `rm -f latest-session.md` at work-entry ensures no stale content
+  poisons the next cycle. No LLM phase ever reads `session-log.md`.
+- **Embedded prompts** vendored from LLM_CONTEXT's current upstream
+  shape at `Mnemosyne/prompts/`: `phases/{work,reflect,compact,triage}.md`
+  plus `fixed-memory/{coding-style,coding-style-rust,memory-style}.md`
+  plus `create-plan.md`. Compiled into the daemon's beam files at
+  compile time via Elixir's `@external_resource` + `File.read!/1`
+  pattern. The `{{PROMPTS}}` placeholder materialises the embedded
+  content into the per-phase staging directory, preserving the
+  upstream `phases/` and `fixed-memory/` subdirectory layout.
+- **No B-owned TUI.** The TUI is a separate Rust client binary (sub-F)
+  that connects to the daemon over `<vault>/runtime/daemon.sock` and
+  speaks NDJSON. B's responsibility ends at the PlanActor's message
+  contract; the TUI consumes typed events and issues action messages
+  entirely across the socket. B ships zero rendering code.
 
-The design assumes: sub-project E's post-session ingestion pipeline (already
-complete, design at `{{PROJECT}}/docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md`),
-sub-project C's harness adapter interface (consumed by name, implementation
-designed separately), sub-project D's advisory lock primitive (consumed by
-name), and the architectural inversions recorded in
-`{{PROJECT}}/mnemosyne/plans/mnemosyne-orchestrator/memory.md`
-(currently at `{{PROJECT}}/LLM_STATE/mnemosyne-orchestrator/memory.md`
-pending sub-project G's migration).
+The design assumes: sub-F's actor model, client socket protocol,
+vault catalog, and dispatch/query message types (design complete,
+`2026-04-14-sub-F-hierarchy-design.md`); sub-C's Elixir harness
+adapter contracts (rewritten inline in Session 11,
+`2026-04-13-sub-C-adapters-design.md`); sub-E's ingestion pipeline
+(pending F amendment to re-cast Stage 5 as dispatch-to-experts);
+sub-A's vault discovery + `mnemosyne.toml` identity marker (design
+complete); and sub-M's hybrid `:telemetry` + typed struct events
+pattern (pending F amendment).
 
 ---
 
@@ -65,6 +121,8 @@ pending sub-project G's migration).
 5. [Testing, Risks, Integration, Open Questions](#5-testing-risks-integration-open-questions)
 6. [Cross-sub-project Requirements](#6-cross-sub-project-requirements)
 7. [Appendix A — Decision Trail](#appendix-a--decision-trail)
+8. [Appendix B — Dependency footprint (`mix.exs`)](#appendix-b--dependency-footprint-mixexs)
+9. [Appendix C — Glossary](#appendix-c--glossary)
 
 ---
 
@@ -72,178 +130,202 @@ pending sub-project G's migration).
 
 ### 1.1 In scope
 
-- The **long-running Mnemosyne process lifecycle**: startup, plan opening,
-  event loop, phase transitions, interrupt handling, takeover flow,
-  shutdown, and crash recovery.
-- The **phase cycle state machine** covering work → reflect → triage → work
-  transitions, interrupted-state semantics, and the preconditions for
+- The **`PhaseRunner` state machine** and its 13-step `run_phase/4` flow,
+  embedded inside a `PlanActor` GenServer.
+- The **four-phase cycle** covering
+  `work → reflect → compact → triage → work` transitions, the
+  conditional compact-trigger check, and the preconditions for
   sub-project E's reflect-exit hook firing.
-- The **`PhaseRunner`, `PhaseExecutor` trait, and three concrete
-  executors**: `LlmHarnessExecutor`, `ManualEditorExecutor`,
-  `FixtureReplayExecutor`.
-- The **`StagingDirectory` mechanism** for pre-rendering plan files with
-  all four placeholders substituted to absolute paths, plus the copy-back
-  flow that propagates executor-driven edits back to the canonical plan
-  directory.
+- The **`PhaseExecutor` behaviour and three concrete implementors**:
+  `LlmHarnessExecutor`, `ManualEditorExecutor`, `FixtureReplayExecutor`.
+- The **`StagingDirectory` module** for pre-rendering plan files with
+  all five placeholders substituted, plus the copy-back flow that
+  propagates executor-driven edits back to the canonical plan directory
+  with reverse substitution.
+- **Forward and reverse placeholder substitution** for the placeholder
+  set: `{{DEV_ROOT}}`, `{{PROJECT}}`, `{{PLAN}}`, `{{PROMPTS}}`,
+  `{{VAULT_CATALOG}}`.
 - The **`plan-state.md` file format** (markdown with YAML frontmatter),
-  its schema versioning rules, and its role as the crash-recovery durable
-  state and the Dataview-facing public interface.
-- The **Mnemosyne-vault layout** inside the dev root: dedicated vault
-  directory, `knowledge/` subdirectory holding Tier 2 global knowledge
-  natively, `runtime/` subdirectory holding staging + interrupts +
-  ingestion events + locks, `projects/` subdirectory populated by
-  symlinks into per-project `<project>/mnemosyne/` directories.
-- The **symlink rescan lifecycle** that maintains the `projects/`
-  symlink tree on Mnemosyne startup.
-- The **`InteractionDriver` trait** and its three v1 implementors
-  (`RatatuiDriver`, `HeadlessDriver`, `IpcDriver`), with the IPC boundary
-  hardened to a future-Obsidian-plugin-ready JSON protocol shape even in
-  v1.
-- The **Ratatui TUI** as the primary user interface: main event loop,
-  pane layout, keybindings, notification feed, takeover prompt modality.
-- The **vendored prompt-reference content** location (`Mnemosyne/prompts/`),
-  its `include_str!` embedding into the binary, and the `{{PROMPTS}}`
-  placeholder that surfaces embedded content to phase prompts during
-  staging render.
-- The **external interface contracts** B exposes to sibling sub-projects:
-  reflect-exit hook (to E), harness adapter contract (from C), TUI action
-  extension points (to H).
+  schema versioning, and its role as the crash-recovery linchpin and
+  Dataview-facing public interface.
+- **Phase composition**: embedded `phases/<phase>.md` + optional per-plan
+  `prompt-<phase>.md` override. Overrides are additive; plans cannot
+  replace the shared phase content.
+- The **optional `pre-work.sh` executable hook**: contract, invocation
+  point, and abort semantics.
+- The **interrupted and takeover flow**: signal propagation, staging
+  preservation, three-option user prompt (`y`/`n`/`retry-llm`).
+- **Crash recovery** at daemon startup for three scenarios: interrupted
+  phase, clean reflect without ingestion, clean state.
+- The **consumption contracts with sub-C** (§11.1 of the Session-11
+  rewrite): `%Mnemosyne.Event.SessionLifecycle{}` pattern-matching as
+  protocol-level signals, and a sliding-buffer sentinel matcher over
+  `%HarnessOutput{kind: :stdout}` events as the task-level completion
+  detector. The sentinel matcher lives in B because sentinels are
+  coupled to phase prompts.
+- The **consumption contracts with sub-F**: B runs inside a PlanActor;
+  `DispatchProcessor` and `QueryProcessor` are invoked as phase-exit
+  hooks after work, reflect, and triage (not compact).
+- The **post-reflect ingestion hook** (for sub-project E): the
+  behaviour callback, exactly-once semantics, and non-blocking
+  invocation.
+- **ISO 8601 UTC-with-seconds session-log timestamps** and the
+  latest-session.md write-then-append pattern.
+- The **embedded prompts module**: compile-time embedding of the
+  LLM_CONTEXT vendor list, `materialise_into/1` helper,
+  `phases/` + `fixed-memory/` subdirectory preservation.
+- The **vault runtime directory** entries B owns: staging dirs,
+  interrupted forensics, per-plan state files. (The socket,
+  mailboxes, routing module, and catalog are sub-F's territory; B
+  consumes them by reference, not by writing them.)
 
 ### 1.2 Deliberately out of scope
 
-- **Harness child session spawning, PTY handling, tool-profile enforcement,
-  fixture replay of harness sessions** — sub-project C. B consumes C's
-  adapter interface by name.
-- **Post-session knowledge ingestion pipeline** — sub-project E (already
-  complete). B specifies only the reflect-exit hook contract E subscribes
-  to.
-- **Multi-instance concurrency, the shared-store lock primitive, and
-  contention semantics** — sub-project D. B calls `plan_lock.acquire()`
-  and releases on drop; implementation is D's.
-- **Plan hierarchy, nested plans, and cross-plan promotion** — sub-project F.
-  B's plan-discovery model assumes flat plans identified by leaf directories
-  containing a `plan-state.md` marker.
-- **Migration of existing plans from `phase.md` to `plan-state.md`** —
-  sub-project G. B's design establishes the target format; G designs the
-  one-shot migration.
-- **Global knowledge store physical location and subpath naming** —
-  sub-project A. B tentatively proposes `<dev-root>/Mnemosyne-vault/` but
-  final naming and any consolidation under a single Mnemosyne-owned dev-root
-  directory is A's call.
-- **Knowledge store content schema** (entries, tags, axes, the wiki-of-
-  markdown vision) — sub-project A. B's use of markdown with YAML
-  frontmatter for plan files is consistent with, but does not constrain,
-  A's format choices.
-- **Explorer/maintenance UI framework** — delegated in its entirety to
-  Obsidian per the 2026-04-12 "Obsidian is the committed explorer"
-  decision. Mnemosyne produces Obsidian-native files; Obsidian renders
-  them. Special Obsidian plugin tooling (sub-project K) extends the base
-  experience in v1.5+.
-- **Integration of the 7 legacy Mnemosyne Claude Code skills** —
-  sub-project H. B provides the TUI action extension points; H decides
-  which legacy skills map to which actions and which are eliminated.
-- **Slash commands inside the Claude Code harness** — explicitly forbidden
-  in v1. The harness runs as a pure worker with no user-facing command
-  surface. All user commands flow through Mnemosyne's TUI.
-- **Obsidian plugin client** — sub-project K, a new backlog candidate
-  surfaced during this brainstorm. Plugin work depends on B's IPC boundary
-  landing in v1 and the terminal plugin evaluation from sub-project L.
-- **Obsidian terminal plugin integration** — sub-project L, a new backlog
-  candidate. Prerequisite for K; evaluates existing Obsidian terminal
-  plugins for harness session hosting.
+- **Harness child session spawning, pipes-based `erlexec` lifecycle,
+  tool profile enforcement, sentinel matcher transport, fixture replay
+  adapter internals** — sub-project C (rewritten for Elixir in
+  Session 11). B consumes C's session GenServer via
+  `attach_consumer/2` and `handle_info/2` pattern matching; B owns the
+  sentinel matcher logic, C owns the transport.
+- **Post-session knowledge ingestion pipeline** — sub-project E. B
+  exposes only the reflect-exit hook contract (§4.2) that E
+  subscribes to. B does not observe ingestion failures or cache
+  absorption outcomes.
+- **Plan hierarchy, path-based qualified IDs, vault catalog content,
+  dispatch/query file formats, declarative routing, Level 2 agents** —
+  sub-project F. B provides the `plan-state.md` marker rule and the
+  descent invariant; F owns everything else about plan structure,
+  inter-plan messaging, and cross-plan reasoning.
+- **Per-actor mailboxes, supervision tree, daemon lifecycle
+  (start/stop/shutdown), client socket protocol, client connection
+  management** — sub-project F.
+- **Daemon singleton lock, external-tool concurrency** —
+  sub-project D (scope collapsed by F's daemon commitment from
+  per-plan locks to a single daemon-wide lock plus advisory
+  coordination with external editors and git).
+- **Vault location, discovery chain, identity marker,
+  `mnemosyne.toml` schema** — sub-project A. B consumes the vault
+  root by reference from the daemon's startup configuration.
+- **TUI implementation, terminal rendering, keybindings** — sub-F's
+  separate Rust TUI client binary. B is not in the rendering loop;
+  B emits typed events and receives action messages through the
+  PlanActor's message interface.
+- **Plan migration from `phase.md` + `LLM_STATE/` layout to
+  `plan-state.md` + `mnemosyne/project-root/`** — sub-project G.
+- **Knowledge store format, Tier 1/2 organization, expert
+  declarations** — sub-projects A (store) and N (experts).
+- **Obsidian plugin client, terminal plugin spike** — sub-projects
+  K and L (v1.5+).
+- **Integration of legacy Claude Code skills** — sub-project H.
+- **Mixture of models, per-actor model selection, local model
+  adapters** — sub-project O (v1.5+).
+- **Team mode, multi-daemon transport, cross-daemon auth** —
+  sub-project P (v2+).
+- **Slash commands or any harness-side user-facing control surface** —
+  explicitly forbidden (see Appendix A Q10).
 
 ### 1.3 Goals, in priority order
 
 1. **Close the substitution gap.** The LLM must never see a raw
-   `{{PROJECT}}`, `{{PLAN}}`, `{{DEV_ROOT}}`, or `{{PROMPTS}}` placeholder
-   in any file it reads during a phase. This is the explicit v1 acceptance
-   criterion surfaced during the LLM_CONTEXT punch-list stop-gap. The
-   staging directory mechanism (§2.2 `StagingDirectory`) is how B meets
-   this goal structurally rather than through prompt-time LLM discipline.
+   `{{PROJECT}}`, `{{PLAN}}`, `{{DEV_ROOT}}`, `{{PROMPTS}}`, or
+   `{{VAULT_CATALOG}}` placeholder in any file it reads during a
+   phase. The staging directory mechanism (§2.3 `StagingDirectory`) is
+   how B meets this goal structurally rather than through prompt-time
+   LLM discipline.
 
-2. **Honour the parent-process inversion, including command authority.**
-   Mnemosyne is the only thing the user types at. The harness has no
-   user-facing command surface in v1 — no Mnemosyne-provided slash
-   commands, no `/begin-work`-style affordances, no callback channels
-   from harness to Mnemosyne. Every user action flows through Mnemosyne's
-   TUI, and Mnemosyne drives the harness through prompts and lifecycle
-   signals only.
+2. **Four-phase cycle as first-class state.** `compact` is not a
+   retrofit — it is part of the cycle enum and part of the
+   `PhaseRunner` state machine. The conditional trigger runs at
+   compact-entry (not inside the phase executor) so the LLM never has
+   to decide "is compaction needed" — the runner decides and either
+   invokes the compact executor or transitions directly to triage.
+   Compact is strictly lossless; reflect is the only phase that may
+   prune memory.md content.
 
-3. **Type-level guarantee of the co-equal-actors principle.** LLM-driven
-   and human-driven phase executions must flow through exactly the same
-   state-transition machinery, hitting the same hooks and emitting the
-   same events. The only permissible difference between an LLM-mode and
-   a human-mode phase execution is the `source` field on emitted events.
-   B achieves this by making `PhaseExecutor` a trait with the phase
-   runner invoking every executor through a single chokepoint — co-equal
-   is enforced by the type system, not documentation.
+3. **Type-level co-equal-actors.** LLM-driven and human-driven phase
+   executions flow through exactly the same `run_phase/4` chokepoint,
+   hitting the same hooks and emitting the same typed events. The only
+   permissible difference between an LLM-mode and a human-mode phase
+   execution is the `executor_kind:` field on emitted events. The
+   `PhaseExecutor` behaviour is what makes this a type-level
+   invariant, not a documentation promise.
 
-4. **Crash-survivable plan state.** Mnemosyne crashing mid-phase must
+4. **PlanActor-hosted phase cycle.** `PhaseRunner` runs **inside** the
+   PlanActor GenServer; phase transitions arrive as `{:run_phase, _}`
+   messages. The runner does not spawn its own processes, own its own
+   event channels, or manage its own supervision. The PlanActor is the
+   owner; B is the state machine embedded in it. Fault isolation,
+   mailbox serialization, and attach-consumer semantics all come from
+   the PlanActor and OTP, not from B.
+
+5. **Crash-survivable plan state.** Daemon crashing mid-phase must
    leave enough durable state on disk for a restart to resume cleanly
    without double-firing or missing sub-project E's ingestion pipeline.
-   The `ingestion-fired` boolean in `plan-state.md`'s frontmatter is the
-   crash-recovery linchpin: it flips from `false` to `true` at the start
-   of sub-E's Stage 5 (before any store writes), so restart after a
-   crash between reflect's clean exit and ingestion's completion fires
-   ingestion exactly once on the stale plan outputs.
+   The `ingestion-fired` boolean in `plan-state.md`'s frontmatter is
+   the crash-recovery linchpin: it flips from `false` to `true` at
+   the start of E's Stage 5 (before any store writes), so restart
+   after a crash between reflect's clean exit and ingestion's
+   completion fires the pipeline exactly once on the stale plan
+   outputs.
 
-5. **Dogfood-ready v1.** V1 must be good enough to host the orchestrator
-   seed plan and sub-project E's sibling plan — retiring
-   `run-backlog-plan.sh` for these two plans is what validates that
-   Mnemosyne works. Migration of the four legacy LLM_CONTEXT projects
-   (APIAnyware-MacOS, GUIVisionVMDriver, Modaliser-Racket, RacketPro) is
-   sub-project G's concern, not B's.
+6. **Dogfood-ready v1.** V1 must be good enough to host the
+   orchestrator seed plan and sub-project E's sibling plan — retiring
+   `run-plan.sh` for these two plans is what validates that the
+   daemon works. Migration of the four legacy LLM_CONTEXT projects
+   (APIAnyware-MacOS, GUIVisionVMDriver, Modaliser-Racket, RacketPro)
+   is sub-project G's concern, not B's.
 
-6. **Obsidian-native file formats by committed design.** Every file
-   Mnemosyne writes in a plan directory or in the vault is markdown with
-   YAML frontmatter where machine-readable metadata is needed; wikilinks
-   are used instead of filesystem paths where cross-references exist;
-   tags are first-class metadata; Dataview can query any plan or
-   knowledge surface with a single table. The file formats Mnemosyne
-   produces are stable public interfaces, not incidental internal
-   representations.
+7. **Obsidian-native file formats by committed design.** Every file
+   B writes in a plan directory or in the vault runtime is markdown
+   with YAML frontmatter where machine-readable metadata is needed;
+   wikilinks are used instead of filesystem paths where
+   cross-references exist; tags are first-class metadata; Dataview
+   can query any plan or runtime surface with a single table. The
+   file formats B produces are stable public interfaces, not
+   incidental internal representations.
 
-7. **Self-contained from `LLM_CONTEXT/`.** The running Mnemosyne binary
-   has zero runtime dependency on a sibling `LLM_CONTEXT/` directory
-   existing. The vendored copies of `backlog-plan.md`,
-   `create-a-multi-session-plan.md`, `coding-style.md`, and
-   `coding-style-rust.md` live inside Mnemosyne's source tree at
-   `{{PROJECT}}/prompts/`, are embedded into the binary at compile time
-   via `include_str!`, and are surfaced to phase prompts through the
+8. **Self-contained from `LLM_CONTEXT/`.** The running Mnemosyne
+   daemon has zero runtime dependency on a sibling `LLM_CONTEXT/`
+   directory existing. The vendored copies of the upstream phase
+   files, fixed-memory files, and `create-plan.md` live inside the
+   Mnemosyne source tree at `Mnemosyne/prompts/`, are embedded into
+   the daemon's beam files at compile time via `@external_resource`
+   + `File.read!/1`, and are surfaced to phase prompts through the
    `{{PROMPTS}}` placeholder.
+
+9. **Hard errors by default.** Every unexpected condition, invariant
+   violation, I/O failure, and ambiguous state fails hard with a
+   clear diagnostic. Illegal phase transitions, schema version
+   mismatches, copy-back rejections, `pre-work.sh` non-zero exits,
+   sentinel matcher overflows, and hook-level failures all raise
+   with a forensic context captured under
+   `<vault>/runtime/interrupted/`.
 
 ### 1.4 Non-goals
 
-- **Bidirectional LLM session suspend/resume.** Once an LLM phase is
+- **Bidirectional LLM session suspend/resume.** Once a phase is
   interrupted, the session is terminated; takeover is a new executor
-  invocation (human or LLM) on the same plan state. Not losing in-flight
-  LLM reasoning is actively a feature per the fresh-context principle,
-  not a cost to engineer around.
-- **Mid-phase harness swapping.** The executor is chosen at
-  phase-invocation time and held until the phase exits. No
-  `LlmHarnessExecutor` → `ManualEditorExecutor` transition inside a
-  running `execute()` call.
-- **Cross-plan multiplexing within one Mnemosyne instance.** One
-  Mnemosyne process hosts exactly one open plan. Multi-plan work uses
-  multiple Mnemosyne processes multiplexed by the user's terminal
-  multiplexer (tmux, terminal tabs, IDE terminal panes). This is
-  unchanged from the seed plan's existing "no TUI multiplexer in v1"
-  decision.
-- **Continuous filesystem watching for vault changes.** Mnemosyne does
-  not watch the dev root for new project repos or new plans appearing.
-  The user runs `mnemosyne rescan` (or quits and restarts) to refresh
-  the symlink tree. This is a deliberate simplification —
-  cross-platform file-watching is a surprising source of portability
-  issues and v1 does not need it.
-- **Customisable embedded prompts in v1.** The vendored prompt-reference
-  content at `{{PROJECT}}/prompts/` is embedded into the binary at
+  invocation (human or LLM) on the same plan state. Not losing
+  in-flight LLM reasoning is actively a feature per the fresh-context
+  principle, not a cost to engineer around.
+- **Mid-phase executor swapping.** The executor is chosen at
+  phase-invocation time and held until the phase exits.
+- **Cross-plan multiplexing within one PlanActor.** One PlanActor
+  hosts exactly one plan. Sibling plans are sibling PlanActors under
+  F's `ActorSupervisor`.
+- **Continuous filesystem watching for vault changes.** The daemon
+  does not watch the dev root for new project repos or new plans
+  appearing. Users run the daemon's rescan command or restart the
+  daemon to refresh.
+- **Customisable embedded prompts in v1.** The vendored
+  prompt-reference content at `Mnemosyne/prompts/` is embedded at
   compile time and cannot be overridden at runtime. V2 may add a
-  config-driven prompt-path override; v1 enforces "use what ships with
-  the binary."
+  config-driven override; v1 enforces "use what ships with the
+  daemon binary."
 - **Windows as a v1 target.** V1 targets macOS and Linux. Windows
-  support is deferred to sub-project K's portability work or a future
-  portability sub-project. Symlink creation on Windows requires
-  Developer Mode or elevated permissions, which is out of scope for v1.
+  is deferred to a future portability sub-project. Symlink creation
+  on Windows requires Developer Mode or elevated permissions and is
+  out of scope.
 
 ---
 
@@ -253,126 +335,169 @@ pending sub-project G's migration).
 
 ```mermaid
 flowchart TB
-    User["User terminal<br/>(keystrokes, $EDITOR)"]
-    TUI["<b>InteractionDriver</b><br/>trait<br/>— RatatuiDriver (v1 primary)<br/>— HeadlessDriver (test)<br/>— IpcDriver (future client)"]
+    Client["Attached client<br/>(Rust TUI, Obsidian plugin,<br/>headless test, IPC)"]
 
-    subgraph Mnemosyne["Mnemosyne long-running process"]
+    subgraph Daemon["Mnemosyne daemon (Elixir / OTP)"]
         direction TB
-        Runner["<b>PhaseRunner</b><br/>orchestrates phase transitions,<br/>writes plan state, fires hooks"]
-        PlanCtx["<b>PlanContext</b><br/>open plan, resolved paths,<br/>in-memory state,<br/>per-plan advisory lock held"]
-        Staging["<b>StagingDirectory</b><br/>pre-rendered plan copy<br/>with placeholders resolved"]
-        Executor["<b>PhaseExecutor trait</b>"]
-        LlmExec["LlmHarnessExecutor"]
-        HumanExec["ManualEditorExecutor"]
-        ReplayExec["FixtureReplayExecutor"]
-        Events["Event channel<br/>(PhaseEvent + ingestion events)"]
-        EmbeddedPrompts["Embedded prompts<br/>(include_str! from<br/>Mnemosyne/prompts/)"]
+        Router["F: Router<br/>dispatches {:run_phase, _}<br/>to target PlanActor"]
+
+        subgraph PlanActor["<b>PlanActor (sub-F GenServer)</b>"]
+            direction TB
+            Runner["<b>B: PhaseRunner</b><br/>state machine<br/>phases + staging + hooks"]
+            Staging["<b>B: StagingDirectory</b><br/>per-phase pre-rendered copy"]
+            Executor["<b>B: PhaseExecutor behaviour</b>"]
+            LlmExec["LlmHarnessExecutor"]
+            HumanExec["ManualEditorExecutor"]
+            ReplayExec["FixtureReplayExecutor"]
+            DispProc["F: DispatchProcessor<br/>(phase-exit hook)"]
+            QueryProc["F: QueryProcessor<br/>(phase-exit hook)"]
+            ReflectHook["E: ReflectExitHook<br/>(callback)"]
+            EmbeddedPrompts["B: Embedded prompts<br/>(compile-time)"]
+        end
+
+        subgraph HarnessAdapter["<b>C: HarnessAdapter behaviour</b>"]
+            Session["session GenServer<br/>(one per live session)<br/>erlexec pipes, stream-json"]
+        end
+
+        EventBus["sub-M<br/>:telemetry + typed struct events"]
     end
 
-    Adapter["<b>HarnessAdapter</b><br/>(sub-project C)<br/>spawn, stream, terminate"]
-    Ingestion["<b>Ingestion pipeline</b><br/>(sub-project E)<br/>post-reflect-exit hook"]
+    PlanDir[("Plan directory<br/>(inside project repo)<br/>plan-state.md<br/>backlog.md<br/>memory.md<br/>session-log.md<br/>dispatches.yaml<br/>queries.yaml<br/>prompt-&lt;phase&gt;.md?<br/>pre-work.sh?")]
 
-    PlanDir[("Plan directory<br/>(inside project repo)<br/>plan-state.md<br/>backlog.md<br/>memory.md<br/>session-log.md")]
-
-    User -->|keys| TUI
-    TUI -->|actions| Runner
-    Runner -->|holds| PlanCtx
+    Client -->|"{:run_phase, :work}"| Router
+    Router -->|routes| PlanActor
+    PlanActor -->|invokes| Runner
     Runner -->|renders| Staging
     Staging -.->|materialises| EmbeddedPrompts
     Runner -->|invokes| Executor
     Executor -.->|impl| LlmExec
     Executor -.->|impl| HumanExec
     Executor -.->|impl| ReplayExec
-    LlmExec -->|spawn| Adapter
-    HumanExec -->|"spawn $EDITOR"| User
+    LlmExec -->|"{:spawn, ...}"| Session
+    Session -->|"{:attach_consumer, _}<br/>%HarnessOutput{}<br/>%SessionLifecycle{}"| LlmExec
     Runner -->|persists| PlanDir
-    Runner -->|emits| Events
-    Events -->|renders| TUI
-    Events -->|triggers| Ingestion
-    Ingestion -->|reads| PlanDir
+    Runner -->|emits typed events| EventBus
+    EventBus -->|forwarded via PlanActor mailbox| Client
+    Runner -->|on clean non-compact exit| DispProc
+    Runner -->|on clean non-compact exit| QueryProc
+    Runner -->|on clean reflect exit| ReflectHook
     Staging <-->|render / copy-back| PlanDir
+    HumanExec -->|$EDITOR| Client
 ```
 
 Solid lines are runtime data flow; dashed lines are type-level
-"implements" or "materialises-from." The critical architectural property:
-nothing on the right-hand side (the TUI) holds a reference to anything on
-the left-hand side (the harness adapter) except through the event
-channel. `PhaseRunner` is the only component that holds references to
-both, and it is the component that makes the co-equal-actors principle a
-type-level invariant.
+"implements" or "materialises-from." The critical architectural
+property: B does not hold references to harness-adapter internals or to
+clients. The PlanActor owns those references. B's `PhaseRunner` issues
+intent (`invoke executor`, `emit event`, `fire hook`) and the PlanActor
+fulfils it through its own mailbox and consumer-attachment lifecycle.
 
-### 2.2 The six core abstractions
+### 2.2 Modules and responsibilities
 
-Six types do the load-bearing work. Everything else in B's implementation
-is wiring.
+| Module | Responsibility |
+|---|---|
+| `Mnemosyne.PhaseRunner` | State machine: 13-step `run_phase/4` + `interrupt/1`. Pure logic; no process spawning. Called from inside `Mnemosyne.PlanActor`. |
+| `Mnemosyne.PlanState` | Load/persist `plan-state.md` (markdown with YAML frontmatter). Atomic write-to-temp-then-rename. Hard-error rejection for unknown `schema-version` and for `description:` overflow. |
+| `Mnemosyne.StagingDirectory` | `render/4`, `copy_back/2`, `preserve_on_interrupt/2`, `cleanup/1`. Enforces the descent invariant and the symlink-into-project-repo rejection. |
+| `Mnemosyne.PhaseExecutor` | `@behaviour` with three concrete implementors below. |
+| `Mnemosyne.PhaseExecutor.LlmHarness` | Builds a `%Mnemosyne.Event.HarnessOutput{}` consumer via `attach_consumer/2`, runs the sliding-buffer sentinel matcher, emits `{:phase_completion_detected, sentinel}` to the runner, consumes `%SessionLifecycle{transition: {:exited, _}}` as the protocol-level terminal signal. |
+| `Mnemosyne.PhaseExecutor.ManualEditor` | Writes `phase-prompt.readonly.md`, resolves target files per phase, spawns `$EDITOR` synchronously. No sentinel matcher (editor exit is the signal). |
+| `Mnemosyne.PhaseExecutor.FixtureReplay` | Walks a JSON-Lines fixture, emits `%HarnessOutput{}` events via the same consumer-attachment contract the LLM executor uses. Dev/test only. |
+| `Mnemosyne.Prompts` | Compile-time embedding of vendored phase files, fixed-memory files, and `create-plan.md`. Exposes per-file binaries and `materialise_into/1`. |
+| `Mnemosyne.Substitution` | Pure forward/reverse substitution functions against the five placeholders. Longest-match-first reverse ordering. |
+| `Mnemosyne.Sentinel.SlidingBuffer` | The task-level completion matcher validated by the BEAM PTY spike. Window bounded to `sentinel_size - 1` bytes. |
+| `Mnemosyne.PreWorkHook` | Executable-file probe + invocation + exit-code check for `<plan>/pre-work.sh`. Only before work. |
 
-#### 2.2.1 `PlanContext`
+Plan hierarchy discovery, the vault catalog, `Mnemosyne.Router`,
+`Mnemosyne.PlanActor`, `Mnemosyne.Event.*` definitions, the
+`DispatchProcessor`, the `QueryProcessor`, the client socket
+protocol, and the Rust TUI client all live under sub-project F's
+scope. B references them by name.
 
-Represents one open plan. Held in memory for the lifetime of the
-Mnemosyne process. Materialised once at startup from a plan directory.
+### 2.3 The core types
 
-```rust
-pub struct PlanContext {
-    pub plan_id: PlanId,            // leaf dir name, e.g. "sub-B-phase-cycle"
-    pub plan_dir: PathBuf,          // canonical path (inside project repo, not symlinked)
-    pub host_project: ProjectId,    // git project root containing the plan
-    pub dev_root: PathBuf,          // parent of host_project
-    pub vault_root: PathBuf,        // resolved Mnemosyne vault
-    pub resolved: ResolvedPaths,    // all four placeholders pre-resolved
-    pub state: PlanState,           // parsed plan-state.md contents
-    pub plan_lock: PlanLockGuard,   // per-plan advisory lock held for session
-}
+All types are Elixir structs. None of them are GenServers; none of
+them own processes. They are values passed through `PhaseRunner` and
+persisted via `PlanState.persist/2`.
 
-pub struct ResolvedPaths {
-    pub dev_root: PathBuf,
-    pub project: PathBuf,
-    pub plan: PathBuf,
-    pub prompts: PathBuf,           // staging-root-relative at render time
-}
+#### 2.3.1 `PlanContext`
+
+Represents one open plan. Held in the PlanActor's GenServer state for
+the lifetime of the actor. Materialised once when the actor starts
+from the filesystem.
+
+```elixir
+defmodule Mnemosyne.PlanContext do
+  @enforce_keys [:plan_dir, :vault_root, :resolved, :state]
+  defstruct [
+    :plan_dir,        # canonical path inside project repo (never symlinked)
+    :vault_root,      # resolved Mnemosyne vault root (from sub-A)
+    :resolved,        # %ResolvedPaths{} — all five placeholders pre-resolved
+    :state,           # %PlanState{} — parsed plan-state.md contents
+    :compact_baseline # integer word count (sticky, updated on successful compact)
+  ]
+end
+
+defmodule Mnemosyne.ResolvedPaths do
+  @enforce_keys [:dev_root, :project, :plan, :prompts, :vault_catalog]
+  defstruct [
+    :dev_root,      # absolute path, string
+    :project,       # absolute path of host project, string
+    :plan,          # absolute path of canonical plan directory, string
+    :prompts,       # staging-root-relative, string (populated per-phase)
+    :vault_catalog  # absolute path to <vault>/plan-catalog.md (from F)
+  ]
+end
 ```
 
-`PlanContext::open(plan_dir)` walks up from the plan dir to find `.git`
-(= host project root), resolves the dev root as its parent, locates the
-Mnemosyne vault, acquires the per-plan advisory lock at
-`<vault>/runtime/locks/<plan-id>.lock`, reads or creates `plan-state.md`,
-and returns the populated context. Every step that can fail fails hard
-with a clear diagnostic — no silent fallbacks.
+Notes on what is **not** in this struct:
 
-The `resolved.prompts` field is populated only during phase execution,
-when `StagingDirectory::render()` has materialised the embedded prompts
-into a concrete staging-relative path. Outside a phase run it holds a
-sentinel value; any code that reads it outside `PhaseRunner::run_phase()`
-is a hard error.
+- No `plan_id` — the qualified ID is a pure function of `plan_dir`
+  relative to `<vault>/projects/` and is computed on demand by F's
+  helpers, not cached here.
+- No `host_project` — derivable from the path. Stored values drift;
+  the filesystem is authoritative.
+- No `dev_root` beyond `resolved.dev_root` — the substitution value is
+  the only use case.
+- No per-plan lock handle — F collapses per-plan locks into a single
+  daemon-wide singleton lock (see sub-D's collapsed scope).
+- No `daemon_pid` — the actor's own PID is managed by the PlanActor
+  GenServer; the frontmatter `daemon-pid` field is written by the
+  runner at phase start from `self()`.
 
-#### 2.2.2 `PlanState` and `plan-state.md`
+The `resolved.prompts` field is populated by
+`StagingDirectory.render/4` during phase execution and cleared on
+phase exit. Any code that reads it outside `PhaseRunner.run_phase/4`
+is a hard error. `resolved.vault_catalog` is stable for the actor's
+lifetime and refreshes when the catalog file's mtime changes
+(detected by F's `CatalogRenderer` at phase-prompt render time).
+
+#### 2.3.2 `PlanState` and `plan-state.md`
 
 `plan-state.md` is a markdown file with YAML frontmatter. Frontmatter
 holds all machine-readable state; the body is a short human-readable
-description Mnemosyne writes on plan creation and otherwise leaves alone.
+description B writes at plan creation and otherwise leaves alone.
 Dataview queries against the frontmatter produce multi-plan dashboards
 spanning every plan across every project in the vault.
 
-Example file (`<project>/mnemosyne/plans/mnemosyne-orchestrator/sub-B-phase-cycle/plan-state.md`
-under the target layout; nested under its parent `mnemosyne-orchestrator`
-plan):
+Example file:
 
 ```markdown
 ---
-plan-id: sub-B-phase-cycle
-host-project: Mnemosyne
-dev-root: /Users/antony/Development
 schema-version: 1
+description: Four-phase cycle in Elixir — PhaseRunner, StagingDirectory, embedded prompts.
 current-phase: reflect
-started-at: 2026-04-12T14:22:18Z
+started-at: 2026-04-15T14:22:18Z
 harness-session-id: reflect-sub-B-phase-cycle-Mnemosyne
-mnemosyne-pid: 48291
+daemon-pid: 48291
 interrupted: false
+compact-baseline: 2840
 tags:
   - mnemosyne-plan
   - phase-reflect
 last-exit:
   phase: work
-  exited-at: 2026-04-12T14:10:02Z
+  exited-at: 2026-04-15T14:10:02Z
   clean-exit: true
   ingestion-fired: false
 ---
@@ -385,1100 +510,1012 @@ recovery. Parent plan: [[mnemosyne-orchestrator]].
 
 Parsed into:
 
-```rust
-pub struct PlanState {
-    pub plan_id: String,
-    pub host_project: String,
-    pub dev_root: PathBuf,
-    pub schema_version: u32,
-    pub current_phase: Phase,
-    pub started_at: Option<DateTime<Utc>>,
-    pub harness_session_id: Option<String>,
-    pub mnemosyne_pid: Option<u32>,
-    pub interrupted: bool,
-    pub tags: Vec<String>,
-    pub last_exit: Option<LastExit>,
-}
+```elixir
+defmodule Mnemosyne.PlanState do
+  @enforce_keys [:schema_version, :description, :current_phase]
+  defstruct [
+    :schema_version,      # integer, must be 1 for v1 binary
+    :description,         # string, ≤120 chars, non-placeholder, hard-capped
+    :current_phase,       # :work | :reflect | :compact | :triage
+    :started_at,          # DateTime, ISO 8601 UTC
+    :harness_session_id,  # string or nil
+    :daemon_pid,          # integer or nil
+    :interrupted,         # boolean, default false
+    :compact_baseline,    # integer word count, updated post-compact
+    :tags,                # list of strings
+    :last_exit            # %LastExit{} or nil
+  ]
+end
 
-pub struct LastExit {
-    pub phase: Phase,
-    pub exited_at: DateTime<Utc>,
-    pub clean_exit: bool,
-    pub ingestion_fired: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase { Work, Reflect, Triage }
+defmodule Mnemosyne.LastExit do
+  @enforce_keys [:phase, :exited_at, :clean_exit, :ingestion_fired]
+  defstruct [
+    :phase,              # :work | :reflect | :compact | :triage
+    :exited_at,          # DateTime, ISO 8601 UTC
+    :clean_exit,         # boolean
+    :ingestion_fired     # boolean
+  ]
+end
 ```
 
-`PlanState::load(plan_dir)` reads and parses; `PlanState::persist(&self,
-plan_dir)` serialises atomically via write-to-temp-then-rename.
-`schema-version` starts at 1. When the format changes in a
-non-backward-compatible way, the version is bumped and a migration
-function is written; the parser rejects unknown higher versions as a
-hard error on load.
+The `current_phase` enum is the full four-phase set. `PlanState.load/1`
+reads and parses via a YAML library (`yaml_elixir` or equivalent);
+`PlanState.persist/2` serialises atomically via write-to-temp-then-rename.
 
-**`ingestion-fired` is the exactly-once firing linchpin.** Sub-project E's
-Stage 5 flips it from `false` to `true` as its very first action, before
-any knowledge store writes. On Mnemosyne restart, if `last_exit.phase ==
-Reflect && last_exit.clean_exit && !last_exit.ingestion_fired`, the
-ingestion pipeline fires on the stale plan outputs one time. This is
-exactly-once firing with file-backed durability and no database.
+**Load-time invariants (hard errors on violation):**
 
-Dataview property naming uses kebab-case (`plan-id`, not `plan_id`)
-because Dataview's query syntax is friendlier to kebab-case field names.
-All YAML frontmatter in every file Mnemosyne writes follows this
-convention consistently.
+| Invariant | Hard error message |
+|---|---|
+| `schema-version` is a known integer | `{:error, :unknown_schema_version, seen}` |
+| `description` is present | `{:error, :missing_description}` |
+| `description` is ≤120 characters | `{:error, :description_too_long, seen, cap}` |
+| `description` is not a placeholder (`TODO`, `FIXME`, `tbd`, `...`) | `{:error, :placeholder_description}` |
+| `current-phase` is one of `work | reflect | compact | triage` | `{:error, :invalid_current_phase, seen}` |
+| `last-exit.phase`, if present, is in the same enum | `{:error, :invalid_last_exit_phase, seen}` |
 
-#### 2.2.3 `PhaseRunner`
+Field names use kebab-case in the YAML (Dataview-friendly) and snake_case
+in the Elixir struct. Conversion happens in `PlanState.load/1` and
+`PlanState.persist/2`.
 
-The central orchestrator. Owns one `PlanContext` and knows how to
-advance a phase.
+**`ingestion-fired` is the exactly-once firing linchpin.** Sub-project
+E's Stage 5 flips it from `false` to `true` as its very first action,
+before any knowledge store writes. On daemon restart, if
+`last_exit.phase == :reflect and last_exit.clean_exit and not
+last_exit.ingestion_fired`, the ingestion pipeline fires on the stale
+plan outputs one time. This is exactly-once firing with file-backed
+durability and no database.
 
-```rust
-pub struct PhaseRunner<'a> {
-    ctx: &'a mut PlanContext,
-    event_tx: mpsc::Sender<PhaseEvent>,
-    vault_runtime_dir: PathBuf,     // <vault>/runtime/
-    reflect_exit_hook: Arc<dyn ReflectExitHook>,
-}
+**`compact-baseline` is sticky.** It tracks the `wc -w memory.md`
+value at the end of the most recent successful compact. The runner's
+compact-trigger check (`wc -w memory.md > compact_baseline + HEADROOM`)
+uses it to decide whether to invoke the compact executor or skip to
+triage. `HEADROOM` is a global constant (`1500`) compiled into the
+daemon. On successful compact exit, the runner writes the new
+word count back to `compact-baseline`.
 
-impl<'a> PhaseRunner<'a> {
-    pub fn run_phase(
-        &mut self,
-        phase: Phase,
-        executor: &dyn PhaseExecutor,
-    ) -> Result<PhaseOutcome, PhaseError>;
+#### 2.3.3 `PhaseRunner`
 
-    pub fn interrupt(&mut self) -> Result<(), PhaseError>;
-}
+The central state machine. Holds no process state; it is a pure
+module invoked from inside `PlanActor`'s `handle_info/2` clause for
+`{:run_phase, _}` messages.
 
-pub enum PhaseOutcome {
-    CleanExit { transitioned_to: Phase },
-    Interrupted { forensics_dir: PathBuf },
-    ExecutorFailed { error: String },
-}
+```elixir
+defmodule Mnemosyne.PhaseRunner do
+  @type outcome ::
+          {:ok, {:transitioned, next_phase :: Mnemosyne.Phase.t()}}
+          | {:interrupted, forensics_dir :: String.t()}
+          | {:executor_failed, reason :: term()}
 
-pub enum PhaseEvent {
-    PhaseStarted {
-        phase: Phase,
-        executor_kind: ExecutorKind,
-        at: DateTime<Utc>,
-    },
-    PhaseExited {
-        phase: Phase,
-        outcome: PhaseOutcome,
-        at: DateTime<Utc>,
-    },
-    PhaseInterrupted {
-        phase: Phase,
-        forensics_dir: PathBuf,
-        at: DateTime<Utc>,
-    },
-    HarnessOutputChunk {
-        kind: OutputChunkKind,
-        text: String,
-    },
-    IngestionEvent(IngestionEventPayload),  // forwarded from sub-E
-}
+  @spec run_phase(
+          ctx :: Mnemosyne.PlanContext.t(),
+          phase :: Mnemosyne.Phase.t(),
+          executor :: module(),
+          parent :: pid()
+        ) :: outcome()
+
+  @spec interrupt(runner_state :: map()) :: :ok
+end
 ```
 
-`run_phase` is the single chokepoint through which every phase execution
-— LLM, human, fixture replay, any future executor — must pass. It
-performs, in strict order:
+`run_phase/4` is the single chokepoint through which every phase
+execution — LLM, human, fixture replay, any future executor — must
+pass. It performs, in strict order:
 
 1. **Validate the phase transition is legal** from
-   `ctx.state.current_phase`. Only `work → reflect`, `reflect → triage`,
-   `triage → work` are legal forward transitions. Illegal transitions
-   fail hard.
-2. **Check the plan-scoped advisory lock is held** (it was acquired at
-   `PlanContext::open`). Idempotent sanity check, not re-acquisition.
-3. **Pre-render the staging directory** via
-   `StagingDirectory::render(&ctx.vault_runtime_dir, &ctx.resolved,
-   &ctx.plan_dir, phase)`.
-4. **Update `ctx.state`**: set `current_phase` to the *incoming* phase
-   (which is usually the same as the current phase, since phases are
-   advanced on exit not entry), set `started_at` to now, set
-   `harness_session_id` and `mnemosyne_pid`. Persist atomically.
-5. **Emit `PhaseStarted`** to the event channel.
-6. **Invoke `executor.execute(&PhaseContext { plan: ctx, staging:
-   &staging, phase })`**, capturing streamed output into the event
-   channel's `HarnessOutputChunk` variant. This call blocks until the
-   executor exits cleanly, fails, or is interrupted.
+   `ctx.state.current_phase`. Legal forward transitions are
+   `work → reflect`, `reflect → compact`, `compact → triage`,
+   `triage → work`. Illegal transitions fail hard.
+   **Exception**: when entering compact, the runner checks the
+   compact-trigger condition and, if the trigger is not met, skips
+   directly to triage without invoking any compact executor. The
+   triage transition is still subject to the legality check
+   (compact → triage) so the skip path preserves the state machine's
+   forward direction.
+2. **Check `pre-work.sh` hook** (only for `:work` phase). Probe
+   `<plan>/pre-work.sh` for executability; if present and executable,
+   first delete any stale `latest-session.md` (defensive cleanup),
+   then invoke the hook synchronously from the project root. Non-zero
+   exit or any I/O failure is a hard error; the phase aborts before
+   staging is rendered. This matches LLM_CONTEXT's upstream contract.
+3. **Render the staging directory** via
+   `StagingDirectory.render(ctx.vault_runtime_dir, ctx.resolved,
+   ctx.plan_dir, phase)`. The render call materialises embedded
+   prompts, composes the phase prompt (shared phase file + optional
+   per-plan override), substitutes all five placeholders, and stages
+   the explicit project file allowlist.
+4. **Update `ctx.state`**: set `current_phase` to the *incoming*
+   phase, set `started_at` to now (ISO 8601 UTC), set
+   `harness_session_id` (from the executor or nil) and `daemon_pid`
+   (from `self()`). Persist atomically.
+5. **Emit `%PhaseLifecycle{kind: :started, phase, executor_kind, at}`**
+   as a typed `Mnemosyne.Event.*` struct via sub-M's `:telemetry`
+   boundary. The PlanActor forwards it to every attached consumer.
+6. **Invoke `executor.execute/3`** with `(ctx, staging, emit_fn)`,
+   where `emit_fn` is a closure the runner provides so the executor
+   can push streamed events without holding a direct reference to
+   the event bus. The call blocks until the executor returns one of
+   `:ok | {:interrupted, reason} | {:error, reason}`.
 7. **On clean executor exit**: run
-   `StagingDirectory::copy_back(&staging, &ctx.plan_dir)` to propagate
+   `StagingDirectory.copy_back(staging, ctx.plan_dir)` to propagate
    any edits the executor made back to the canonical plan directory.
-   Reject any write-back outside the plan directory or the explicitly-
-   staged project subtree as a hard error.
-8. **Compute the next phase** (`work → reflect`, `reflect → triage`,
-   `triage → work`).
-9. **Update `ctx.state.last_exit`** with `phase: phase, exited_at: now,
-   clean_exit: true, ingestion_fired: false`. Set `current_phase` to
-   the next phase. Persist atomically.
-10. **Emit `PhaseExited`** with `CleanExit { transitioned_to: next_phase }`.
-11. **If the completed phase was `Reflect`**, call
-    `self.reflect_exit_hook.on_reflect_exit(ReflectExitContext { ... })`.
-    This is non-blocking; ingestion runs on a dedicated task and is not
-    awaited.
-12. **Clean up the staging directory** if it was cleanly consumed.
-13. **Return** `PhaseOutcome::CleanExit { transitioned_to: next_phase }`.
+   Reject any write-back outside `{{PLAN}}` or the explicitly-staged
+   project subtree as a hard error (the outcome becomes
+   `:executor_failed` and staging is preserved for forensics).
+8. **Compute the next phase.** For `work → reflect`,
+   `reflect → compact`, `triage → work`, the mapping is unambiguous.
+   For `compact → triage`, the runner writes the new `compact-baseline`
+   from `wc -w memory.md` before transitioning. For the
+   compact-skipped branch, next is `triage` directly (the compact
+   phase is elided, not counted in `last-exit`).
+9. **Post-work session-log append.** If the completed phase was
+   `:work`, append the contents of `<plan>/latest-session.md` to
+   `<plan>/session-log.md` via a write-to-temp-then-rename. If
+   `latest-session.md` does not exist (the work phase wrote nothing),
+   that is a soft warning, not a hard error, and the append is
+   skipped. `latest-session.md` is deleted either way.
+10. **Update `ctx.state.last_exit`** with the phase that just ran,
+    `exited_at: now`, `clean_exit: true`, `ingestion_fired: false`.
+    Set `current_phase` to the computed next phase. Persist
+    atomically.
+11. **Emit `%PhaseLifecycle{kind: :exited_clean, phase, transitioned_to, at}`**.
+12. **If the completed phase was `:reflect`**, call
+    `reflect_exit_hook.on_reflect_exit/1` (from sub-E). Non-blocking
+    — the PlanActor dispatches it to a task under its own supervision
+    so the runner can return control immediately.
+13. **Run phase-exit hooks from sub-F** for non-compact phases
+    (`:work`, `:reflect`, `:triage`):
+    - `Mnemosyne.DispatchProcessor.process(ctx.plan_dir, emit_fn)`
+    - `Mnemosyne.QueryProcessor.process(ctx.plan_dir, emit_fn)`
+    Both are synchronous from the runner's perspective but are internally
+    bounded by F's timeout config. Compact is skipped because compact's
+    contract is "strictly lossless memory rewriting" and the phase
+    never produces new dispatches or queries.
+14. **Clean up the staging directory** if it was cleanly consumed.
+15. **Return** `{:ok, {:transitioned, next_phase}}`.
 
-On executor failure, steps 7–12 are skipped, and the outcome reports the
-error with the staging dir preserved under
-`<vault>/runtime/interrupted/<plan-id>/<phase>-<timestamp>/` for
-forensics. On interrupt, the interrupted-state flow from §3.6 takes
-over.
+On executor failure, steps 7–14 are skipped, and the outcome reports
+the error with the staging dir preserved under
+`<vault>/runtime/interrupted/<qualified-id>/<phase>-<timestamp>/` for
+forensics. On interrupt, the interrupted-state flow from §3.4 takes
+over. Every numbered step is a hard-error boundary: any unhandled
+failure raises into the PlanActor, which catches the exit via its
+supervisor and reports through sub-M's typed event pipeline.
 
-Every numbered step is a hard-error boundary. Any failure in steps 1–13
-that is not explicitly handled (interrupt, executor failure) aborts the
-phase with a hard error, preserving the staging directory and writing
-a diagnostic to the interrupted forensics log.
+#### 2.3.4 `PhaseExecutor` behaviour
 
-#### 2.2.4 `PhaseExecutor` trait
+```elixir
+defmodule Mnemosyne.PhaseExecutor do
+  @type phase_ctx :: %{
+          plan: Mnemosyne.PlanContext.t(),
+          staging: Mnemosyne.StagingDirectory.t(),
+          phase: Mnemosyne.Phase.t()
+        }
 
-```rust
-pub trait PhaseExecutor {
-    fn kind(&self) -> ExecutorKind;
+  @callback kind() :: :llm | :human | :fixture_replay
 
-    fn execute(
-        &self,
-        ctx: &PhaseContext,
-        output_tx: &mpsc::Sender<String>,
-    ) -> Result<(), ExecutorError>;
+  @callback execute(
+              phase_ctx(),
+              emit_fn :: (Mnemosyne.Event.t() -> :ok)
+            ) :: :ok | {:interrupted, reason :: term()} | {:error, reason :: term()}
 
-    fn interrupt(&self);
-}
-
-pub struct PhaseContext<'a> {
-    pub plan: &'a PlanContext,
-    pub staging: &'a StagingDirectory,
-    pub phase: Phase,
-}
-
-pub enum ExecutorKind { Llm, Human, FixtureReplay }
-
-#[derive(thiserror::Error, Debug)]
-pub enum ExecutorError {
-    #[error("harness adapter error: {0}")]
-    Adapter(#[from] AdapterError),
-    #[error("editor exited with non-zero status: {0}")]
-    EditorFailed(i32),
-    #[error("fixture replay error: {0}")]
-    FixtureReplay(String),
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-}
+  @callback interrupt(state :: term()) :: :ok
+end
 ```
 
 Three concrete implementors ship in v1:
 
-**`LlmHarnessExecutor`** — holds a `Box<dyn HarnessAdapter>` (sub-project
-C). `execute()` reads the phase prompt file from the staging directory,
-hands it to the adapter's `spawn()` method with tool profile
-`ResearchBroad` (or `IngestionMinimal` for sub-project E's internal
-reasoning sessions — selected per phase at executor construction time),
-streams output chunks to `output_tx`, waits for child exit. `interrupt()`
-signals the adapter to terminate; the actual termination completes
-asynchronously and is observed via `next_chunk()` returning
-`Ok(None)`.
+**`LlmHarnessExecutor`** — consumes a `Mnemosyne.HarnessAdapter` (sub-C)
+session GenServer. Its `execute/2`:
 
-**`ManualEditorExecutor`** — `execute()` writes the phase prompt content
-to `<staging>/phase-prompt.readonly.md` as a reference sibling file,
-determines the target file(s) for the phase (`work` → `backlog.md` +
-`session-log.md`; `reflect` → `memory.md` + `session-log.md`; `triage` →
-`backlog.md`), spawns `$EDITOR` blocking on them, waits for exit.
-`interrupt()` is a no-op — the user closes their editor themselves. The
-sibling read-only file is the manual executor's way of surfacing the
-phase prompt without polluting the target file with scratch content.
+1. Reads the composed phase prompt from
+   `<staging>/phase-prompt.md`.
+2. Calls `adapter.spawn(spawn_args)` where `spawn_args` includes the
+   tool profile (`:research_broad` for work/reflect/compact/triage,
+   `:ingestion_minimal` for sub-E's internal reasoning sessions
+   when B invokes them) plus the cmux-noise-mitigation flags
+   mandated by sub-C (`--setting-sources project,local
+   --no-session-persistence`).
+3. Attaches as a consumer via `attach_consumer(session_pid, self())`.
+4. Sends the phase prompt as a user-message envelope via
+   `send_user_message(session_pid, prompt)`.
+5. Enters a `receive` loop consuming:
+   - `{:event, %Mnemosyne.Event.HarnessOutput{kind: :stdout} = ev}` —
+     push to the runner's `emit_fn` **and** feed the sliding-buffer
+     sentinel matcher. If the matcher fires, emit
+     `{:phase_completion_detected, sentinel}` to the runner's own
+     message queue (via `send(parent, ...)`) and proceed to
+     graceful shutdown.
+   - `{:event, %Mnemosyne.Event.SessionLifecycle{transition: :ready} = ev}`
+     — forward unchanged.
+   - `{:event, %Mnemosyne.Event.SessionLifecycle{transition:
+     {:turn_complete, _}} = ev}` — forward unchanged. **Not** treated
+     as end-of-phase; `result` is a protocol-level signal, not a
+     task-level one.
+   - `{:event, %Mnemosyne.Event.SessionLifecycle{transition:
+     {:exited, reason}} = ev}` — forward, then return from `execute/2`
+     with `:ok | {:error, reason}` depending on `reason`.
+   - `{:interrupt, reason}` (from the runner in response to user
+     action) — call `adapter.kill(session_pid, reason)` and await
+     the `{:exited, _}` lifecycle event.
+6. **The sentinel matcher is B's responsibility.** It reads the
+   concrete sentinel for the current phase from the phase prompt's
+   tail (the shared prompt files end with a phrase like "when
+   finished say READY FOR THE NEXT PHASE") and runs a sliding-buffer
+   match with window bounded to `sentinel_size - 1` bytes across
+   every `%HarnessOutput{kind: :stdout}` event. The matcher is
+   validated by the BEAM PTY spike against single-chunk, split,
+   drip, false-prefix, and false-overlap cases.
 
-**`FixtureReplayExecutor`** — `execute()` reads a captured output stream
-from a JSON fixture file, pushes chunks to `output_tx` with simulated
-pacing, returns. No process spawn, no `$EDITOR`, no harness adapter.
-Used for end-to-end tests of `PhaseRunner` + `StagingDirectory` + event
-channel + TUI rendering without a live harness.
+**`ManualEditorExecutor`** — `execute/2`:
 
-The co-equal-actors principle is enforced by the type system: every
-executor is called by `run_phase`, which fires hooks regardless of
-executor kind. A test that exercises `run_phase` with
+1. Writes the composed phase prompt to
+   `<staging>/phase-prompt.readonly.md` as a reference file.
+2. Determines the target file(s) for the phase:
+   - `:work` → `backlog.md` plus creates an empty
+     `latest-session.md` for the human to fill in.
+   - `:reflect` → `memory.md` (reads `latest-session.md` as input
+     via the phase prompt's `{{PLAN}}/latest-session.md` reference).
+   - `:compact` → `memory.md` (lossless rewrite; the phase prompt
+     carries the lossless-rewrite contract from
+     `fixed-memory/memory-style.md`).
+   - `:triage` → `backlog.md`.
+3. Reads `$EDITOR` from the environment; hard-errors if unset.
+4. Spawns `$EDITOR` synchronously on the target file(s) via
+   `System.cmd/3` (bound to the controlling terminal via the
+   PlanActor's io context). Awaits exit.
+5. Returns `:ok` on clean exit, `{:error, {:editor_failed, code}}`
+   on non-zero. `interrupt/1` is a no-op — the human closes the
+   editor themselves.
+
+No sentinel matcher. Editor exit is the signal.
+
+**`FixtureReplayExecutor`** — `execute/2` reads a JSON-Lines fixture
+file specified at executor construction time and emits
+`%HarnessOutput{}` events through `emit_fn` with simulated pacing.
+Used for deterministic end-to-end tests of `PhaseRunner` +
+`StagingDirectory` + event plumbing without a live harness. Fixture
+format is shared with sub-C's fixture-replay adapter.
+
+The co-equal-actors principle is enforced by the behaviour: every
+executor is called by `run_phase/4`, which fires hooks regardless of
+executor kind. A test that exercises `run_phase/4` with
 `ManualEditorExecutor` and a test that exercises it with
 `LlmHarnessExecutor` both hit the same hook firing, the same state
-transitions, the same event channel. The only permissible difference
-between an LLM-mode and a human-mode phase execution is the `source`
-field on emitted events (which includes `executor_kind` from
-`PhaseStarted`).
+transitions, the same event emission. The only permissible difference
+between LLM mode and human mode is the `executor_kind:` field on
+emitted events.
 
-#### 2.2.5 `StagingDirectory`
+#### 2.3.5 `StagingDirectory`
 
-The substitution gap closer. Wraps a per-phase staging directory under
-`<vault>/runtime/staging/<plan-id>/<phase>-<timestamp>/`.
+The substitution gap closer. Wraps a per-phase staging directory
+under `<vault>/runtime/staging/<qualified-id>/<phase>-<timestamp>/`.
 
-```rust
-pub struct StagingDirectory {
-    pub root: PathBuf,
-    pub source_plan_dir: PathBuf,
-    pub source_project_dir: PathBuf,
-    pub resolved: ResolvedPaths,
-}
+```elixir
+defmodule Mnemosyne.StagingDirectory do
+  @enforce_keys [:root, :source_plan_dir, :source_project_dir, :resolved]
+  defstruct [:root, :source_plan_dir, :source_project_dir, :resolved]
 
-impl StagingDirectory {
-    pub fn render(
-        vault_runtime_dir: &Path,
-        resolved: &ResolvedPaths,
-        plan_dir: &Path,
-        phase: Phase,
-    ) -> Result<Self, StagingError>;
+  @spec render(
+          vault_runtime_dir :: String.t(),
+          resolved :: Mnemosyne.ResolvedPaths.t(),
+          plan_dir :: String.t(),
+          phase :: Mnemosyne.Phase.t()
+        ) :: {:ok, t()} | {:error, term()}
 
-    pub fn copy_back(
-        &self,
-        target_plan_dir: &Path,
-    ) -> Result<CopyBackReport, StagingError>;
+  @spec copy_back(
+          t(),
+          target_plan_dir :: String.t()
+        ) :: {:ok, Mnemosyne.CopyBackReport.t()} | {:error, term()}
 
-    pub fn preserve_on_interrupt(
-        &self,
-        interrupted_root: &Path,
-    ) -> Result<PathBuf, StagingError>;
+  @spec preserve_on_interrupt(
+          t(),
+          interrupted_root :: String.t()
+        ) :: {:ok, String.t()} | {:error, term()}
 
-    pub fn cleanup(&self) -> Result<(), StagingError>;
+  @spec cleanup(t()) :: :ok
+end
 
-    pub fn path_in_staging(&self, name: &str) -> PathBuf;
-}
-
-pub struct CopyBackReport {
-    pub files_updated: Vec<PathBuf>,
-    pub files_unchanged: Vec<PathBuf>,
-    pub files_added: Vec<PathBuf>,
-    pub files_rejected: Vec<PathBuf>,
-}
+defmodule Mnemosyne.CopyBackReport do
+  defstruct files_updated: [], files_unchanged: [], files_added: [], files_rejected: []
+end
 ```
 
-`render` walks the plan directory, copies every file to the staging
-root with `{{DEV_ROOT}}`, `{{PROJECT}}`, `{{PLAN}}`, and `{{PROMPTS}}`
-substituted in each file's content. It also:
-
-1. **Writes the four-placeholder-substituted phase prompt** to
-   `<staging>/phase-prompt.md`, ready for executors to read.
-2. **Materialises the embedded prompt-reference content** (from
-   `Mnemosyne/prompts/` via `include_str!`) into `<staging>/prompts/`
-   as concrete files. The `{{PROMPTS}}` placeholder in the phase prompt
-   and in any staged plan file resolves to `<staging>/prompts/`.
-3. **Stages the narrow set of host-project files** referenced by the
-   phase prompt. The staging allowlist is resolved at prompt-parse
-   time: the phase prompt is scanned for `{{PROJECT}}/...` tokens, and
-   exactly those files are staged. No blanket project-tree staging.
-   A default allowlist covers `README.md` and any explicitly-referenced
-   file under `<project>/docs/`.
-4. **Never follows symlinks into project repos.** When walking the
-   plan directory during staging, a symlink whose target is outside
-   the plan directory is a hard error. This prevents accidental
-   exfiltration of unrelated project content into the LLM's view.
-5. **Refuses to descend into child plan directories.** When walking
-   the plan directory, any subdirectory containing a `plan-state.md`
-   marker is skipped entirely — the staging copy contains only the
-   current plan's files, not any of its nested children's. This is
-   the critical invariant that keeps "one plan per Mnemosyne process"
-   intact against the nested filesystem hierarchy: opening the
-   orchestrator plan must not stage sub-B-phase-cycle's files, and
-   vice versa. Sub-plans are opened through their own Mnemosyne
-   invocations with their own `PlanContext` and their own staging.
-
-`copy_back` walks the staging root after executor exit, compares each
-file against the canonical plan directory, and writes through the
-changes. Files outside `{{PLAN}}` or the allowed project subtree are
-rejected (not copied back) and reported as hard errors. The phase
-outcome becomes `ExecutorFailed` and the staging directory is preserved
-for forensics. This is B's equivalent of sub-project E's Rule 6
-(file-write safety).
-
-On clean phase exit, the staging directory is deleted by `cleanup()`.
-On interrupt, it is moved to
-`<vault>/runtime/interrupted/<plan-id>/<phase>-<timestamp>/staging/` by
-`preserve_on_interrupt`. On hard-error abort, same preservation path
-with a reason label.
-
-#### 2.2.6 `InteractionDriver` trait
-
-```rust
-pub trait InteractionDriver {
-    fn run(
-        &mut self,
-        plan: PlanContext,
-        runner: PhaseRunner,
-        events_rx: mpsc::Receiver<PhaseEvent>,
-    ) -> Result<(), DriverError>;
-
-    fn kind(&self) -> InteractionKind;
-}
-
-pub enum InteractionKind { Ratatui, Headless, Ipc }
-```
-
-The `InteractionDriver` is the UI boundary. V1 ships three implementors:
-
-**`RatatuiDriver`** — the v1 primary UI. A full-screen terminal app
-with three panes: backlog summary, streaming executor output, and
-notification feed for phase and ingestion events. Constructed from the
-`PlanContext` and the event channel receiver. Owns the `PhaseRunner`
-for the session and invokes `runner.run_phase()` in response to user
-actions. Renders all `PhaseEvent` variants as they arrive on the
-channel. Described in detail in §3.4.
-
-**`HeadlessDriver`** — reads user actions from a fixture script or
-stdin and writes events to stdout as JSON lines. Enables full
-end-to-end integration tests of the phase runner, staging, executors,
-and event channel without a terminal emulator. Used by the Tier 2
-test suite (§5.1).
-
-**`IpcDriver`** — v1 forward compatibility. Reads user actions from
-stdin as JSON lines and writes events to stdout as JSON lines, exposing
-a stable IPC protocol that a future Obsidian plugin client (sub-project
-K) can consume. Ships in v1 with no client attached — the purpose is
-to force the `InteractionDriver` boundary to be serialisable at
-compile time, so a later plugin client can attach without core rework.
-If any new method added to `InteractionDriver` can't be implemented by
-`IpcDriver`, it fails to compile. This is the enforcement mechanism
-for the "IPC boundary hardening" decision.
-
-All three implementors hold the same `PhaseRunner` and consume the
-same event channel. Switching UIs is a runtime choice (CLI flag:
-`--tui` is default, `--headless` for tests, `--ipc` for future
-clients). No core code changes between them.
-
-### 2.3 Dev-root layout and the Mnemosyne vault
-
-Each project has one Mnemosyne-owned directory (`<project>/mnemosyne/`)
-holding both plans and Tier 1 knowledge. The vault has one symlink per
-project targeting that directory, so Obsidian accesses the full
-per-project Mnemosyne surface through a single link.
-
-```mermaid
-flowchart TB
-    subgraph Dev["Dev root (owned by user, NOT a vault)"]
-        direction TB
-
-        subgraph Projects["Project repos (each with its own .git)"]
-            direction LR
-            Mnemo["Mnemosyne/<br/>├── src/ (Rust source)<br/>├── prompts/ (vendored)<br/>├── mnemosyne/<br/>│   ├── plans/<br/>│   │   └── mnemosyne-orchestrator/<br/>│   │       ├── plan-state.md<br/>│   │       ├── sub-B-phase-cycle/<br/>│   │       │   └── plan-state.md<br/>│   │       └── sub-E-ingestion/<br/>│   │           └── plan-state.md<br/>│   └── knowledge/ (Tier 1)<br/>└── .git"]
-            APIAny["APIAnyware-MacOS/<br/>├── ... code ...<br/>├── mnemosyne/<br/>│   ├── plans/<br/>│   └── knowledge/ (Tier 1)<br/>└── .git"]
-            Other["other project repos/"]
-        end
-
-        subgraph Vault["Mnemosyne-vault/ (dedicated, Mnemosyne-owned, own .git)<br/><i>This is the Obsidian vault root</i>"]
-            direction TB
-            ObsCfg[".obsidian/<br/>(vault config, partially versioned)"]
-            Knowledge["knowledge/ (versioned)<br/>├── languages/<br/>├── domains/<br/>├── tools/<br/>├── techniques/<br/>└── projects/<br/><i>Tier 2 global knowledge (native)</i>"]
-            Runtime["runtime/<br/>├── staging/ (gitignored, ephemeral)<br/>├── interrupted/ (versioned, forensic)<br/>├── ingestion-events/ (versioned, durable)<br/>│   ├── 2026-04-12.jsonl<br/>│   └── research/<br/>├── locks/ (gitignored)<br/>└── index.sqlite (gitignored)"]
-            Projs["projects/ (gitignored, symlink tree)<br/>├── Mnemosyne@ → ../../Mnemosyne/mnemosyne/<br/>├── APIAnyware-MacOS@ → ../../APIAnyware-MacOS/mnemosyne/<br/>└── ... (auto-maintained on startup)"]
-        end
-    end
-
-    Projects -.->|symlinked into| Projs
-```
-
-**Content locations:**
-
-| Content | Canonical location | Vault presence |
-|---------|--------------------|----------------|
-| Project source code | `<dev-root>/<project>/` | not in vault — Obsidian never sees it |
-| Plan files (backlog/memory/session-log/plan-state) | `<dev-root>/<project>/mnemosyne/plans/<...nested plan path...>/` | accessible via symlink `Mnemosyne-vault/projects/<project>/plans/<...>/` |
-| Tier 1 per-project knowledge | `<dev-root>/<project>/mnemosyne/knowledge/` | accessible via symlink `Mnemosyne-vault/projects/<project>/knowledge/` |
-| Tier 2 global knowledge | `Mnemosyne-vault/knowledge/` | native — lives permanently in the vault |
-| Embedded prompts (vendored) | `<dev-root>/Mnemosyne/prompts/` + binary | materialised into `<vault>/runtime/staging/<plan-id>/<phase>-<ts>/prompts/` during phase render |
-| Staging directories | `Mnemosyne-vault/runtime/staging/<plan-id>/<phase>-<ts>/` | native, ephemeral, gitignored |
-| Interrupted forensic logs | `Mnemosyne-vault/runtime/interrupted/<plan-id>/<phase>-<ts>/` | native, durable, versioned |
-| Ingestion events (sub-E) | `Mnemosyne-vault/runtime/ingestion-events/<YYYY-MM-DD>.jsonl` | native, durable, versioned |
-| Research session transcripts (sub-E) | `Mnemosyne-vault/runtime/ingestion-events/research/<session-id>.jsonl` | native, durable, versioned |
-| Advisory locks (sub-D) | `Mnemosyne-vault/runtime/locks/<plan-id>.lock` | native, gitignored |
-
-**Plan hierarchy support:** plans can nest arbitrarily inside
-`<project>/mnemosyne/plans/`. A directory is a plan if and only if it
-contains a `plan-state.md` file. Nested directories (child plans) are
-themselves plans in their own right; intermediate directories without
-the marker file are pure organisation. The exact hierarchy semantics
-(whether a reserved root-plan location exists, how process-state
-promotes upward, parent/child relationship tracking) are sub-project F's
-scope. B's contract is: plans are identified by the `plan-state.md`
-marker, and plan discovery is "walk up from cwd looking for the nearest
-`plan-state.md`." This works naturally with both flat and deeply nested
-layouts.
-
-**Git boundaries:** project repos are sovereign — Mnemosyne only writes
-files inside `<project>/mnemosyne/` and never touches `<project>/.git`.
-The Mnemosyne-vault is its own git repo, versioning knowledge +
-interrupted forensics + ingestion events, and gitignoring staging +
-locks + symlinks + rebuildable indexes. Symlinks are gitignored because
-their absolute paths are per-machine; a vault clone rebuilds them on
-first startup via the rescan.
-
-**Naming collision note:** inside the Mnemosyne project repo itself,
-the layout reads as `<dev-root>/Mnemosyne/mnemosyne/`. Capitalisation
-disambiguates: uppercase `Mnemosyne/` is the project repo (a proper
-noun, matching other project names like `APIAnyware-MacOS`), lowercase
-`mnemosyne/` is the per-project role directory. At the dev-root level,
-three Mnemosyne-related names coexist without confusion:
-`Mnemosyne/` (the project), `Mnemosyne-vault/` (the dedicated vault),
-and any `<project>/mnemosyne/` (the per-project role directory).
-
-**Vault location default:** `<dev-root>/Mnemosyne-vault/`. Configurable
-via sub-project A's config mechanism. Multi-dev-root users can have
-separate vaults per dev root; users wanting a single shared vault can
-configure multiple Mnemosyne installations to point at the same path.
-
-**First-run bootstrap:** if the vault doesn't exist on startup,
-Mnemosyne creates it, including:
-- `.obsidian/` stub directory with a recommended plugin list (Dataview
-  required, Templater optional) and default graph-view settings
-- `knowledge/`, `runtime/`, `projects/` subdirectories
-- `.git` initialised
-- `.gitignore` with `runtime/staging/`, `runtime/locks/`,
-  `runtime/index.sqlite`, `projects/`
-- `README.md` at the vault root explaining what the vault is and
-  how to open it in Obsidian
-
-### 2.4 Symlink maintenance lifecycle
-
-Mnemosyne dynamically maintains the `projects/` symlink tree under the
-vault on every startup (and on explicit `mnemosyne rescan`):
-
-1. **Walk the dev root** looking for project repos (directories
-   containing `.git`). Exclude `Mnemosyne-vault/` itself.
-2. **For each project**, check for `<project>/mnemosyne/`. If present
-   and not already symlinked into the vault, create a relative symlink
-   at `Mnemosyne-vault/projects/<project-name>` targeting
-   `../../<project>/mnemosyne/`. One symlink per project covers both
-   plans and knowledge.
-3. **Garbage-collect dangling symlinks.** Any symlink under `projects/`
-   whose target no longer exists is removed.
-4. **Cycle detection.** If walking encounters a symlink that would form
-   a cycle (one-level-deep detection via `same-file`), the rescan
-   aborts for that project only with a hard error, preserving the
-   existing symlinks and logging the failure to the event channel for
-   TUI display. Other projects continue.
-5. **Symlinks use relative paths** (`../../Mnemosyne/mnemosyne`) so the
-   vault can be moved as a unit without breaking resolution, as long
-   as the vault and project repos stay at consistent relative positions
-   under the dev root.
-
-Rescan is not continuous. Mnemosyne does not watch the filesystem for
-new projects appearing. Users run `mnemosyne rescan` (a TUI action) or
-restart Mnemosyne to pick up changes. This is a deliberate v1
-simplification — file watching is a known source of portability
-surprises and v1 does not need it.
-
-### 2.5 Self-containment from `LLM_CONTEXT/`
-
-Mnemosyne's binary has zero runtime dependency on the sibling
-`{{DEV_ROOT}}/LLM_CONTEXT/` directory. The vendored prompt-reference
-content lives at `{{PROJECT}}/prompts/` in the Mnemosyne source tree
-and is compiled into the binary via `include_str!`:
-
-```rust
-// In src/prompts.rs
-pub const BACKLOG_PLAN_SPEC: &str =
-    include_str!("../prompts/backlog-plan.md");
-pub const CREATE_MULTI_SESSION_PLAN: &str =
-    include_str!("../prompts/create-a-multi-session-plan.md");
-pub const CODING_STYLE: &str =
-    include_str!("../prompts/coding-style.md");
-pub const CODING_STYLE_RUST: &str =
-    include_str!("../prompts/coding-style-rust.md");
-
-pub fn materialise_into(prompts_dir: &Path) -> Result<(), std::io::Error> {
-    std::fs::create_dir_all(prompts_dir)?;
-    std::fs::write(
-        prompts_dir.join("backlog-plan.md"),
-        BACKLOG_PLAN_SPEC,
-    )?;
-    std::fs::write(
-        prompts_dir.join("create-a-multi-session-plan.md"),
-        CREATE_MULTI_SESSION_PLAN,
-    )?;
-    std::fs::write(
-        prompts_dir.join("coding-style.md"),
-        CODING_STYLE,
-    )?;
-    std::fs::write(
-        prompts_dir.join("coding-style-rust.md"),
-        CODING_STYLE_RUST,
-    )?;
-    Ok(())
-}
-```
-
-`StagingDirectory::render()` calls `prompts::materialise_into(&staging.root.join("prompts"))`
-as part of its render sequence. Phase prompts reference the materialised
-files via `{{PROMPTS}}/backlog-plan.md`, `{{PROMPTS}}/coding-style-rust.md`,
-etc. After substitution, the LLM reads them through its normal Read tool
-against concrete paths inside the staging directory.
-
-Customisation of embedded prompts is a v2 feature. V1 enforces "use what
-ships with the binary." The bootstrap discipline constraint in the seed
-plan's memory specifically forbids customisation at v1 as a means of
-forcing honest dogfooding against a shared prompt baseline.
-
----
-
-## 3. Runtime Lifecycle
-
-### 3.1 Process lifecycle state machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Starting: mnemosyne &lt;plan-path&gt;
-
-    Starting --> Idle: plan opened,&lt;br/&gt;state restored,&lt;br/&gt;TUI initialised
-    Starting --> CrashRecovery: plan-state.md shows&lt;br/&gt;interrupted=true OR&lt;br/&gt;ingestion-fired=false
-    CrashRecovery --> Idle: recovery actions complete
-
-    Idle --> PhaseRunning: user triggers&lt;br/&gt;advance phase
-    PhaseRunning --> Idle: executor exits cleanly,&lt;br/&gt;copy-back OK,&lt;br/&gt;state persisted
-    PhaseRunning --> Interrupted: user Ctrl-C or&lt;br/&gt;Cancel Phase action
-    Interrupted --> Idle: takeover=no,&lt;br/&gt;phase stays same,&lt;br/&gt;interrupted=true
-    Interrupted --> PhaseRunning: takeover=yes,&lt;br/&gt;same phase,&lt;br/&gt;new executor
-    PhaseRunning --> Stopping: executor hard error
-    Idle --> Stopping: user quits
-
-    Stopping --> [*]: lock released,&lt;br/&gt;state persisted,&lt;br/&gt;staging cleaned
-```
-
-### 3.2 Startup sequence
-
-CLI surface is minimal:
-
-```
-mnemosyne                               # auto-discover a plan in cwd
-mnemosyne <plan-dir>                    # open a specific plan
-mnemosyne --replay <fixture-dir>        # fixture replay for tests
-mnemosyne --headless --script <path>    # scripted actions for tests
-mnemosyne --ipc                         # JSON IPC mode for future clients
-mnemosyne rescan                        # refresh vault symlink tree and exit
-mnemosyne --version | --help            # standard
-```
-
-Startup sequence, every step a hard-error boundary:
-
-1. **Parse CLI and determine plan directory.** Either explicit argument
-   or auto-discovery: walk up from cwd looking for a `plan-state.md`
-   marker, or walk down into `mnemosyne/plans/` if cwd is a project
-   root. Fail hard if no plan is found.
-2. **Locate the host project** by walking up from the plan dir to find
-   `.git`. Fail hard if no `.git` is found.
-3. **Locate the dev root** as the parent of the host project. Fail hard
-   if the parent doesn't exist.
-4. **Locate or bootstrap the Mnemosyne vault.** Default location is
-   `<dev-root>/Mnemosyne-vault/`; can be overridden by sub-project A's
-   config mechanism. If the vault doesn't exist, bootstrap it (§2.3).
-   Fail hard if bootstrap fails.
-5. **Run the symlink rescan** (§2.4) to ensure the plan is reachable
-   via `<vault>/projects/<project>/plans/<...>`. Verify the symlink
-   exists post-rescan or fail hard.
-6. **Acquire the per-plan advisory lock** via `flock` on
-   `<vault>/runtime/locks/<plan-id>.lock`. Fail hard with a clear
-   diagnostic naming the holding PID if contended. (Sub-project D's
-   primitive.)
-7. **Load `plan-state.md`**. If it doesn't exist (first Mnemosyne run
-   on this plan, post-migration), write a new one with
-   `current-phase: work`, `schema-version: 1`, and identity fields
-   populated from the directory name and the resolved host project.
-   If it exists but has a higher `schema-version` than this binary
-   knows, fail hard with a version-mismatch diagnostic.
-8. **Run crash recovery** (§3.3) if the loaded state indicates a
-   prior non-clean exit.
-9. **Construct `PlanContext`, `PhaseRunner`, event channel.** Initialise
-   the `InteractionDriver` (`RatatuiDriver` by default, `HeadlessDriver`
-   if `--headless`, `IpcDriver` if `--ipc`).
-10. **Transition to Idle.** TUI renders the main view.
-
-### 3.3 Crash recovery
-
-Crash recovery runs at the `Starting → Idle` transition, reading the
-just-loaded `plan-state.md` for signs of a prior non-clean exit.
-
-**Scenario A — last phase was interrupted.** `plan-state.md` has
-`interrupted: true`. The staging directory for that phase is preserved
-under `<vault>/runtime/interrupted/<plan-id>/<phase>-<timestamp>/`.
-
-Recovery: surface the prior interrupt to the user via the TUI's
-notification feed on first render. The notification includes a wikilink
-to the interrupted directory (Obsidian-native) and offers a "retry this
-phase" action. No automatic re-execution — the user decides. The
-`interrupted: true` flag stays set until the user either retries the
-phase or explicitly dismisses it through a TUI action, which clears the
-flag.
-
-**Scenario B — last reflect exited cleanly but ingestion never fired.**
-`plan-state.md` has `last-exit.phase: reflect`, `last-exit.clean-exit:
-true`, `last-exit.ingestion-fired: false`. The prior Mnemosyne process
-exited between reflect's clean end and ingestion's Stage 5 flipping the
-flag. This is the exactly-once firing linchpin.
-
-Recovery: fire the ingestion pipeline on the prior reflect's outputs
-as the first post-Idle action. `ingestion-fired` flips to `true` at
-the start of Stage 5 (sub-project E's responsibility). The user sees
-ingestion events streaming in the TUI notification feed before they've
-taken any action, which is correct — it is continuation of a phase
-that had already completed from their perspective.
-
-**Scenario C — everything is fine.** `plan-state.md` shows a clean
-state. Recovery is a no-op.
-
-Crash recovery itself is idempotent: running it twice on the same state
-produces the same result, so a crash *during* recovery leads to the
-same recovery on the next restart.
-
-### 3.4 Idle and the TUI event loop
-
-In Idle, `RatatuiDriver` renders the current plan state and waits for
-user input. The main loop:
-
-```rust
-loop {
-    tui.render(&plan_ctx, &notifications);
-
-    select! {
-        input = tui.next_input() => match input {
-            TuiAction::AdvancePhase { mode } => {
-                let next = compute_next_phase(plan_ctx.state.current_phase);
-                let executor = build_executor(mode, &harness_adapter);
-                runner.run_phase(next, &*executor)?;
-            }
-            TuiAction::InterruptPhase => runner.interrupt()?,
-            TuiAction::Quit => break,
-            TuiAction::OpenInEditor { file } => spawn_editor(file)?,
-            TuiAction::RescanPlans => run_symlink_rescan(&vault)?,
-            TuiAction::RetryInterruptedPhase => { ... }
-            TuiAction::DismissInterrupt => {
-                plan_ctx.state.interrupted = false;
-                plan_ctx.persist()?;
-            }
-            TuiAction::TakeoverManual => { /* §3.6 */ }
-            TuiAction::TakeoverLlmRetry => { /* §3.6 */ }
-            // Extended by sub-project H with skill-derived actions
-        },
-        event = events_rx.recv() => {
-            notifications.push(event);
-        }
-    }
-}
-```
-
-The TUI does not directly mutate `plan-state.md` — only
-`PhaseRunner::run_phase` and a small set of explicit state operations
-(dismiss interrupt, acknowledge notification) do. This keeps state
-mutations funneled through a small, testable surface.
-
-**Pane layout** (three panes, vertical split with status bar):
-
-```
-┌────────────────────────────┬──────────────────────────────────────┐
-│ Backlog (top-left)         │ Executor output (right, full height) │
-│ ── backlog.md summary      │ ── streaming harness / editor output │
-│ ── current task highlight  │ ── scrollable, ansi-aware             │
-│                            │                                       │
-├────────────────────────────┤                                       │
-│ Notifications (bottom-left)│                                       │
-│ ── phase events             │                                       │
-│ ── ingestion events         │                                       │
-│ ── interrupt / takeover     │                                       │
-│ ── crash recovery messages  │                                       │
-└────────────────────────────┴──────────────────────────────────────┘
- Status: plan=sub-B-phase-cycle phase=reflect mode=llm pid=48291
-```
-
-**Keybindings** (defaults, configurable later):
-
-| Key | Action |
-|-----|--------|
-| `a` | Advance phase (LLM mode) |
-| `m` | Advance phase (manual mode) |
-| `c` / `Ctrl-C` | Interrupt running phase |
-| `r` | Retry interrupted phase |
-| `d` | Dismiss interrupt |
-| `e` | Open target file in `$EDITOR` |
-| `s` | Run symlink rescan |
-| `q` | Quit |
-| `?` | Show help |
-| Arrow keys / `hjkl` | Navigate within active pane |
-| `Tab` | Switch active pane |
-
-### 3.5 PhaseRunning
-
-When the user triggers `AdvancePhase` from Idle, `PhaseRunner::run_phase`
-begins executing through the 13-step sequence from §2.2.3. The TUI
-continues to render in its own thread (or tokio task), displaying
-streaming `HarnessOutputChunk` events in the output pane and
-`PhaseEvent` variants in the notification feed. The user can still
-interact with the TUI during PhaseRunning — specifically, `c` /
-`Ctrl-C` / a menu action signals the runner to interrupt.
-
-Two internal sub-states are worth naming:
-
-- **ExecutorRunning** — the `executor.execute()` call is in progress.
-  Interrupt signals propagate through the executor's `interrupt()`
-  method (which forwards to the harness adapter's termination for
-  `LlmHarnessExecutor`, no-op for `ManualEditorExecutor`).
-- **CopyingBack** — `executor.execute()` has returned cleanly; the
-  runner is running `copy_back()`. **Interrupts during CopyingBack
-  are not honoured immediately.** The user's interrupt signal is
-  recorded in a pending-interrupt flag; copy-back runs to completion;
-  then the runner checks the pending flag and, if set, transitions
-  the phase to the Interrupted state immediately after copy-back
-  finishes (with the phase having technically completed cleanly
-  before the interrupt lands). This is a deliberate asymmetry:
-  aborting mid-copy risks leaving the plan directory in an
-  inconsistent state, which violates the "hard errors by default,
-  state must always be consistent on disk" principle. Copy-back is
-  short (typically well under a second) and mostly atomic; the user
-  waiting a fraction of a second for the interrupt to take effect is
-  a small cost for the consistency guarantee.
-
-### 3.6 Interrupted and takeover
-
-When PhaseRunning is interrupted, the runner:
-
-1. **Signals `executor.interrupt()`.** `LlmHarnessExecutor` forwards to
-   the harness adapter's `terminate()` (graceful stop → grace period →
-   force kill). `ManualEditorExecutor` is a no-op.
-2. **Captures any streamed output** into
-   `<vault>/runtime/interrupted/<plan-id>/<phase>-<timestamp>/partial-output.log`.
-3. **Preserves the staging directory** via
-   `StagingDirectory::preserve_on_interrupt()`, moving it to
-   `<vault>/runtime/interrupted/<plan-id>/<phase>-<timestamp>/staging/`.
-4. **Updates `plan-state.md`**: `interrupted: true`,
-   `last-exit.phase: <current>`, `last-exit.clean-exit: false`. Does
-   **not** transition `current-phase` to the next phase — the plan
-   stays on the interrupted phase.
-5. **Emits `PhaseInterrupted { phase, forensics_dir, at }`** to the
-   event channel.
-6. **Surfaces a takeover prompt** in the TUI notification feed:
-
-   > *"Phase `reflect` interrupted (32s captured → `[[reflect-2026-04-12T14-28-09]]`). Take over manually? [y / n / retry-llm]"*
-
-   The prompt is non-modal — the user can keep interacting with the
-   TUI while deciding. The wikilink syntax `[[...]]` is Obsidian-native
-   so the notification is immediately actionable when the user opens
-   the vault in Obsidian.
-
-7. **On user response:**
-
-   | Response | Action |
-   |----------|--------|
-   | **`y` (take over)** | Re-enter PhaseRunning with `ManualEditorExecutor` on the same phase, same plan state, fresh staging dir (re-rendered to discard partial edits). `interrupted` flag is cleared at the start of the manual phase. Hooks fire normally on manual exit. |
-   | **`n` (dismiss)** | `interrupted` stays `true`. User will resolve it later or retry via the TUI's explicit "retry interrupted phase" action. |
-   | **`retry-llm`** | Re-enter PhaseRunning with `LlmHarnessExecutor`, same phase, fresh staging dir. |
-
-The three-option takeover prompt is a user-convenience refinement —
-without `retry-llm`, a user who interrupted by mistake would have to
-dismiss and then manually re-trigger `AdvancePhase`, which is two keys
-where one would do.
-
-### 3.7 Stopping
-
-Two paths into Stopping: clean user quit from Idle, or a hard error
-from PhaseRunning that the runner can't recover from (copy-back
-rejection, unwritable plan-state, unrecoverable executor error).
-
-Shutdown sequence:
-
-1. **Stop accepting new user input.** TUI transitions to a "shutting
-   down" render state.
-2. **If PhaseRunning, force-interrupt** the executor. Capture partial
-   output as in §3.6.
-3. **Persist `plan-state.md`** with the final state. On clean quit
-   from Idle this is a no-op (state is already persisted). On
-   hard-error shutdown this captures the error context in a new
-   `last-exit.error` field (free-form diagnostic string).
-4. **Release the per-plan advisory lock.**
-5. **Clean up the staging directory** on clean exit. On hard error,
-   preserve it under `<vault>/runtime/interrupted/` with a reason
-   label.
-6. **Restore the terminal** (ratatui teardown).
-7. **Exit with 0** on clean quit, **non-zero** on hard error, with a
-   clear diagnostic on stderr summarising what went wrong and
-   pointing at the preserved interrupted directory.
-
-All hard-error paths exit through this same Stopping sequence. There
-is no "emergency abort" that skips state persistence — the plan
-state must always be consistent on disk after Mnemosyne exits,
-because the next startup will read it.
-
----
-
-## 4. External Interfaces
-
-B touches three sibling sub-project boundaries through well-defined
-interfaces. Each is a small, stable shape that B depends on *by name*
-and sibling sub-projects implement.
-
-### 4.1 `HarnessAdapter` — consumed from sub-project C
-
-`LlmHarnessExecutor` holds a `Box<dyn HarnessAdapter>`. B defines the
-trait shape; sub-project C fills in the implementations. V1 ships with
-one concrete implementor: `ClaudeCodeAdapter`. Future harnesses are
-added by C's future work.
-
-```rust
-pub trait HarnessAdapter: Send + Sync {
-    fn kind(&self) -> HarnessKind;
-
-    fn spawn(
-        &self,
-        prompt: &str,
-        working_dir: &Path,
-        tool_profile: ToolProfile,
-        session_name: &str,
-    ) -> Result<Box<dyn HarnessSession>, AdapterError>;
-}
-
-pub trait HarnessSession: Send {
-    fn next_chunk(&mut self) -> Result<Option<OutputChunk>, AdapterError>;
-    fn terminate(&mut self);
-    fn wait(&mut self) -> Result<SessionExitStatus, AdapterError>;
-    fn session_id(&self) -> &str;
-}
-
-pub enum HarnessKind {
-    ClaudeCode,
-    FixtureReplay,
-}
-
-pub enum ToolProfile {
-    ResearchBroad,      // full tools: read/write/shell/web/knowledge-query
-    IngestionMinimal,   // no tools (sub-E's Stage 3/4 sessions)
-}
-
-pub struct OutputChunk {
-    pub text: String,
-    pub kind: OutputChunkKind,
-    pub at: DateTime<Utc>,
-}
-
-pub enum OutputChunkKind { Stdout, Stderr, ToolUse, InternalMessage }
-
-pub enum SessionExitStatus {
-    CleanExit { exit_code: i32 },
-    Terminated { signal: Option<i32> },
-    CrashedBeforeReady,
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum AdapterError {
-    #[error("harness binary not found on PATH: {0}")]
-    HarnessNotFound(String),
-    #[error("harness spawn failed: {0}")]
-    SpawnFailed(String),
-    #[error("tool profile {profile:?} not supported by harness {harness:?}")]
-    UnsupportedToolProfile { profile: ToolProfile, harness: HarnessKind },
-    #[error("session terminated abnormally: {0}")]
-    AbnormalTermination(String),
-    #[error("harness adapter I/O error: {0}")]
-    Io(#[from] std::io::Error),
-}
-```
-
-**Contract requirements on sub-project C** (recorded as cross-sub-project
-requirements in §6):
-
-1. **`spawn()` is cheap.** Cold-spawn latency target: < 3 seconds per
-   session. Warm-pool reuse is C's implementation problem, not B's.
-2. **Tool profile enforcement is C's responsibility.** A harness that
-   attempts a disallowed tool must fail the session at the adapter
-   level, not be permitted via prompt discipline.
-3. **`terminate()` is non-blocking and idempotent.** Called from
-   interrupt handlers that must return immediately. Actual termination
-   happens asynchronously and is observed via `next_chunk()` returning
-   `Ok(None)`.
-4. **`next_chunk()` is a blocking streaming read.** Not polled, not
-   async. B runs each executor on its own thread (or tokio task) so
-   blocking reads don't starve the TUI event loop.
-5. **`HarnessKind::FixtureReplay` is a first-class variant.** The
-   fixture-replay adapter reads a captured JSON stream and emits it
-   as `OutputChunk`s through the normal `HarnessSession` trait. Used
-   by B's end-to-end tests and by sub-project E's pipeline tests.
-6. **Working directory is the staging root**, not the plan dir or
-   project root. The harness session starts with cwd set to the
-   staging directory so file reads via tools land on pre-substituted
-   copies.
-7. **Session name is passed to the harness's session-tracking id.**
-   Claude Code uses `-n <name>`; other harnesses adapt. B passes
-   `<phase>-<plan-id>-<project>`.
-8. **No callback channel from harness to Mnemosyne.** Per the "no
-   slash commands in the harness" decision, output streams are
-   one-way (harness → adapter → B). Mnemosyne's reactions happen
-   entirely on the Mnemosyne side, after the session exits, via
-   sub-project E's ingestion pipeline.
-
-### 4.2 `ReflectExitHook` — exposed to sub-project E
-
-After a reflect phase completes cleanly, `PhaseRunner::run_phase`
-fires sub-project E's ingestion pipeline non-blockingly, before
-transitioning to the triage phase. The hook is a method call, not a
-channel subscription, because E runs in the same process as B.
-
-```rust
-pub trait ReflectExitHook: Send + Sync {
-    fn on_reflect_exit(&self, ctx: ReflectExitContext);
-}
-
-pub struct ReflectExitContext {
-    pub plan_id: String,
-    pub host_project: String,
-    pub plan_dir: PathBuf,
-    pub vault_runtime_dir: PathBuf,
-    pub session_log_latest_entry: String,
-    pub ingestion_fired_setter: Box<dyn Fn() + Send + Sync>,
-}
-```
-
-**Contract semantics:**
-
-1. **Called by `PhaseRunner`** between steps 9 (persist new
-   `plan-state.md`) and step 12 (clean up staging), only on clean
-   reflect exit and only when `last-exit.ingestion-fired` was `false`
-   before B ran. The `ingestion_fired_setter` closure is called by
-   E's Stage 5 at the start of Stage 5, flipping the flag. B does not
-   flip it.
-2. **Non-blocking.** B returns control to the TUI and transitions to
-   the next phase immediately. Ingestion runs on a dedicated tokio
-   task.
-3. **Non-blocking error handling.** If the ingestion pipeline crashes,
-   sub-E's own event log records the failure. B does not observe
-   ingestion failures — they're E's responsibility and surface via E's
-   event stream (forwarded through the shared `PhaseEvent` channel as
-   `IngestionEvent` variants) to the TUI's notification feed. B's
-   phase cycle continues either way.
-4. **Exactly-once firing is the joint responsibility** of B (only
-   calls the hook under the right preconditions) and E (flips
-   `ingestion-fired` to `true` before any Stage 5 writes). If E
-   crashes after flipping the flag but before writing, the missed
-   cycle is not retried automatically — the user can manually trigger
-   re-ingestion for that plan via a TUI action if they notice the
-   gap.
-5. **No callback from E back to B.** E does not tell B "ingestion
-   done." E emits events to the shared channel; B and the TUI observe
-   them like any other event.
-
-### 4.3 `InteractionDriver` — the hardened UI boundary
-
-The `InteractionDriver` trait (§2.2.6) is the UI boundary and the
-hardening point for Path 1's staging approach. Its design constraint:
-
-> Every call across the `InteractionDriver` boundary must be
-> serialisable to JSON. No raw Rust references crossing the trait.
-> No callbacks into core state. No held pointers. Only value-typed
-> messages.
-
-This is enforced by the existence of `IpcDriver`, which implements the
-full trait by serialising every interaction as JSON lines on stdin/stdout.
-If any new method added to `InteractionDriver` can't be implemented by
-`IpcDriver`, it fails to compile. This makes a future Obsidian plugin
-client (sub-project K) a pure-additive feature — the plugin speaks the
-same JSON protocol `IpcDriver` already ships.
-
-The JSON protocol surface for v1 is minimal. Only the message shapes
-currently in use by the TUI and by `HeadlessDriver` are exposed; the
-protocol version is explicitly `1` in every message. Future protocol
-extensions bump the version; `IpcDriver` rejects unknown higher versions
-as a hard error.
-
-Concrete JSON shapes are drafted during implementation, not fixed at
-spec time — the goal at spec time is the boundary discipline, not the
-exact wire format. The implementation task ships both a draft protocol
-and a `tests/fixtures/ipc-protocol/` directory with example message
-sequences that the tests validate against.
-
-### 4.4 `TuiAction` — extensible action surface for sub-project H
-
-Sub-project H decides which of the 7 legacy Mnemosyne Claude Code
-skills (`/begin-work`, `/reflect`, `/setup-knowledge`, `/create-plan`,
-`/curate-global`, `/promote-global`, `/explore-knowledge`) become
-Mnemosyne TUI actions. B provides a stable action-dispatch interface
-that H can hook into:
-
-```rust
-pub enum TuiAction {
-    AdvancePhase { mode: ExecutorMode },
-    InterruptPhase,
-    Quit,
-    OpenInEditor { file: PathBuf },
-    RescanPlans,
-    RetryInterruptedPhase,
-    DismissInterrupt,
-    TakeoverManual,
-    TakeoverLlmRetry,
-    // H adds variants here for skill-derived actions.
-    // Each new variant is implemented inside Mnemosyne core, not as
-    // a harness slash command. The TUI binds a keystroke to each.
-}
-
-pub enum ExecutorMode { Llm, Human }
-```
-
-**B's only constraint on H:** no `TuiAction` variant may be implemented
-as a harness callback. If a legacy skill needs LLM reasoning (e.g.,
-`explore-knowledge` doing gap analysis), it becomes a Mnemosyne-internal
-reasoning session spawned via the same `HarnessAdapter`, running as a
-child just like any phase executor — not a slash command the user types
-inside a running harness session.
-
-### 4.5 Substitution and the `{{PROMPTS}}` placeholder
-
-Four placeholders participate in substitution:
+`render/4` walks the plan directory, copies every file to the
+staging root with **forward substitution** applied to `.md` files.
+It also:
+
+1. **Composes the phase prompt.** Reads the shared phase file
+   (`Mnemosyne.Prompts.phase(phase)` — see §2.5) and appends the
+   plan's optional `prompt-<phase>.md` override if present. The
+   result is four-placeholder-substituted (`{{DEV_ROOT}}`,
+   `{{PROJECT}}`, `{{PLAN}}`, `{{PROMPTS}}`) plus
+   `{{VAULT_CATALOG}}`-substituted with the current vault catalog
+   content (resolved via F's `CatalogRenderer`). The composed
+   prompt is written to `<staging>/phase-prompt.md`, ready for
+   executors to read.
+2. **Materialises the embedded prompt-reference content** (via
+   `Mnemosyne.Prompts.materialise_into/1`) into `<staging>/prompts/`
+   as concrete files, preserving the `phases/` and `fixed-memory/`
+   subdirectory layout. The `{{PROMPTS}}` placeholder resolves to
+   `<staging>/prompts/`.
+3. **Stages the narrow set of host-project files** referenced by
+   the phase prompt. The staging allowlist is resolved at
+   prompt-parse time by scanning the composed phase prompt for
+   `{{PROJECT}}/...` tokens; exactly those files are staged. A
+   default allowlist covers `README.md` and any explicitly-referenced
+   file under `<project>/docs/`. No blanket project-tree staging.
+4. **Never follows symlinks into project repos.** A symlink whose
+   target is outside the plan directory is a hard error. This
+   prevents accidental exfiltration of unrelated project content
+   into the LLM's view.
+5. **Refuses to descend into child plan directories.** Any
+   subdirectory containing a `plan-state.md` marker is skipped
+   entirely. The staging copy contains only the current plan's
+   files, not any of its nested children's. This is the critical
+   invariant that keeps "one plan per PlanActor" intact against the
+   nested filesystem hierarchy. Sub-plans are opened through their
+   own PlanActor instances (each with its own `PlanContext` and
+   its own staging).
+6. **Refuses to descend into the `knowledge/` sibling** at
+   `<project>/mnemosyne/knowledge/`. This is covered by the
+   marker-based invariant (knowledge/ never contains
+   `plan-state.md`) but is called out explicitly because the walker
+   starts at `<project>/mnemosyne/project-root/` for root plans and
+   would otherwise be confused by the sibling directory structure.
+
+`copy_back/2` walks the staging root after executor exit, compares
+each file against the canonical plan directory via content hash,
+applies **reverse substitution** on `.md` files only, and writes
+through changed files atomically. Files outside `{{PLAN}}` or the
+allowed project subtree are rejected (not copied back) and reported
+as hard errors. The phase outcome becomes `:executor_failed` and the
+staging directory is preserved for forensics.
+
+`preserve_on_interrupt/2` moves the staging directory to
+`<vault>/runtime/interrupted/<qualified-id>/<phase>-<timestamp>/staging/`
+via a rename-based move. `cleanup/1` deletes the staging directory on
+clean phase exit via a recursive delete; both operations are idempotent.
+
+### 2.4 Placeholder substitution
+
+Five placeholders participate in substitution:
 
 | Placeholder | Resolves to | Source |
 |-------------|-------------|--------|
-| `{{DEV_ROOT}}` | Absolute path of the dev root | Computed at `PlanContext::open` |
-| `{{PROJECT}}` | Absolute path of the host project root | Computed at `PlanContext::open` |
-| `{{PLAN}}` | Absolute path of the canonical plan directory | Computed at `PlanContext::open` |
-| `{{PROMPTS}}` | Staging-relative path to materialised embedded prompts | Computed per-phase at `StagingDirectory::render` |
+| `{{DEV_ROOT}}` | Absolute path of the dev root | Computed at PlanActor start from the vault location |
+| `{{PROJECT}}` | Absolute path of the host project root | Computed at PlanActor start from `plan_dir` |
+| `{{PLAN}}` | Absolute path of the canonical plan directory | Known at PlanActor start |
+| `{{PROMPTS}}` | Staging-relative path to materialised embedded prompts (e.g. `<staging>/prompts`) | Computed per-phase at `StagingDirectory.render/4` |
+| `{{VAULT_CATALOG}}` | Full content of `<vault>/plan-catalog.md` at render time | Read via F's `CatalogRenderer` at `StagingDirectory.render/4` |
 
-Substitution happens in two places:
+**Forward substitution** happens in two places:
 
-1. **In the phase prompt text** (`<staging>/phase-prompt.md`). The
-   phase prompt is read from the plan directory, substituted with all
-   four placeholders, and written to the staging directory. Executors
-   read the substituted version.
-2. **In every file under the plan directory staged to staging.** Plan
-   files (`backlog.md`, `memory.md`, `session-log.md`, `plan-state.md`)
-   may contain references to `{{PROJECT}}/docs/...` or similar tokens
-   that should resolve to absolute paths when the LLM reads them via
-   its Read tool. `StagingDirectory::render()` substitutes these
+1. **In the composed phase prompt** (`<staging>/phase-prompt.md`).
+   The composed prompt is substituted with all five placeholders
+   before being written.
+2. **In every `.md` file under the plan directory staged to
+   staging.** Plan files (`backlog.md`, `memory.md`,
+   `session-log.md`, `plan-state.md`) may contain references to
+   `{{PROJECT}}/docs/...` or similar tokens; these are substituted
    in-place in the staged copies.
 
-`copy_back` does the **reverse substitution**: on each file being
-copied back, Mnemosyne scans for literal occurrences of the resolved
-absolute path strings for `{{DEV_ROOT}}`, `{{PROJECT}}`, and `{{PLAN}}`
-and rewrites them back to the placeholder form before writing through
-to the canonical plan directory. `{{PROMPTS}}` is not reverse-substituted
-— its staging-relative value is per-phase and never appears in canonical
-plan files. The substitution algorithm is:
+**Reverse substitution** on copy-back rewrites resolved absolute
+paths back to placeholder form so the canonical files stay portable
+across machines. Longest-match-first ordering is load-bearing:
 
 ```
-for each line in file:
+for each .md file in staging:
     1. longest-match first: replace resolved({{PLAN}}) → {{PLAN}}
     2. then: replace resolved({{PROJECT}}) → {{PROJECT}}
     3. then: replace resolved({{DEV_ROOT}}) → {{DEV_ROOT}}
 ```
 
-Longest-match-first ordering matters because `resolved({{PLAN}})` is
-a prefix-extended version of `resolved({{PROJECT}})` which is a
-prefix-extended version of `resolved({{DEV_ROOT}})`. Substituting the
-longest first means the shorter prefixes inside an already-substituted
-line don't accidentally re-match. This keeps plan files portable across
-machines — the canonical form uses placeholders; the staged form is
-substituted for LLM consumption; reverse substitution on copy-back
-preserves the canonical form on disk.
+`{{PROMPTS}}` and `{{VAULT_CATALOG}}` are **forward-only**. Their
+resolved values are per-phase or per-render and never appear in
+canonical plan files, so reverse substitution does not touch them.
 
-Reverse substitution is a source of subtle bugs if the same string
-appears in both placeholder and literal form in a plan file (e.g., a
-session log entry quoting an absolute path from a shell error). The
-design mitigates this by:
+**Mitigation for substring collisions:** substitute only in `.md`
+files; substitute only the specific well-known placeholder tokens,
+not any string that happens to match a resolved path; log every
+reverse substitution to the staging-directory forensic log so users
+can audit if anything looks wrong.
 
-- Only substituting in files with extension `.md` (not arbitrary file
-  types that might have content looking like paths).
-- Only substituting the specific well-known placeholder tokens, not
-  any string that happens to match the resolved path.
-- Logging every reverse substitution to the forensic log when the
-  phase exits, so the user can audit if anything looks wrong.
+### 2.5 Embedded prompts
+
+The daemon has zero runtime dependency on a sibling `LLM_CONTEXT/`
+directory. The vendored prompt-reference content lives at
+`Mnemosyne/prompts/` and is compiled into the daemon's beam files
+at compile time.
+
+Vendored files (this is the **forward-compatibility chokepoint** for
+LLM_CONTEXT evolution — every upstream change that adds a shared file
+must either land here or be explicitly scoped out):
+
+```
+Mnemosyne/prompts/
+├── phases/
+│   ├── work.md
+│   ├── reflect.md
+│   ├── compact.md
+│   └── triage.md
+├── fixed-memory/
+│   ├── coding-style.md
+│   ├── coding-style-rust.md
+│   └── memory-style.md
+└── create-plan.md
+```
+
+The pre-overhaul filenames `backlog-plan.md` and
+`create-a-multi-session-plan.md` are **deleted/renamed upstream** and
+must not appear in the vendor list or in `Mnemosyne.Prompts`.
+
+Elixir compile-time embedding pattern:
+
+```elixir
+defmodule Mnemosyne.Prompts do
+  # Tell the compiler to track these files so `mix compile` rebuilds
+  # the module when they change.
+  @external_resource Path.join(__DIR__, "../../prompts/phases/work.md")
+  @external_resource Path.join(__DIR__, "../../prompts/phases/reflect.md")
+  @external_resource Path.join(__DIR__, "../../prompts/phases/compact.md")
+  @external_resource Path.join(__DIR__, "../../prompts/phases/triage.md")
+  @external_resource Path.join(__DIR__, "../../prompts/fixed-memory/coding-style.md")
+  @external_resource Path.join(__DIR__, "../../prompts/fixed-memory/coding-style-rust.md")
+  @external_resource Path.join(__DIR__, "../../prompts/fixed-memory/memory-style.md")
+  @external_resource Path.join(__DIR__, "../../prompts/create-plan.md")
+
+  # Read once at compile time; baked into the beam file as literal binaries.
+  @phase_work         File.read!(Path.join(__DIR__, "../../prompts/phases/work.md"))
+  @phase_reflect      File.read!(Path.join(__DIR__, "../../prompts/phases/reflect.md"))
+  @phase_compact      File.read!(Path.join(__DIR__, "../../prompts/phases/compact.md"))
+  @phase_triage       File.read!(Path.join(__DIR__, "../../prompts/phases/triage.md"))
+  @coding_style       File.read!(Path.join(__DIR__, "../../prompts/fixed-memory/coding-style.md"))
+  @coding_style_rust  File.read!(Path.join(__DIR__, "../../prompts/fixed-memory/coding-style-rust.md"))
+  @memory_style       File.read!(Path.join(__DIR__, "../../prompts/fixed-memory/memory-style.md"))
+  @create_plan        File.read!(Path.join(__DIR__, "../../prompts/create-plan.md"))
+
+  def phase(:work),    do: @phase_work
+  def phase(:reflect), do: @phase_reflect
+  def phase(:compact), do: @phase_compact
+  def phase(:triage),  do: @phase_triage
+
+  @spec materialise_into(prompts_dir :: String.t()) :: :ok
+  def materialise_into(prompts_dir) do
+    File.mkdir_p!(Path.join(prompts_dir, "phases"))
+    File.mkdir_p!(Path.join(prompts_dir, "fixed-memory"))
+
+    File.write!(Path.join(prompts_dir, "phases/work.md"), @phase_work)
+    File.write!(Path.join(prompts_dir, "phases/reflect.md"), @phase_reflect)
+    File.write!(Path.join(prompts_dir, "phases/compact.md"), @phase_compact)
+    File.write!(Path.join(prompts_dir, "phases/triage.md"), @phase_triage)
+    File.write!(Path.join(prompts_dir, "fixed-memory/coding-style.md"), @coding_style)
+    File.write!(Path.join(prompts_dir, "fixed-memory/coding-style-rust.md"), @coding_style_rust)
+    File.write!(Path.join(prompts_dir, "fixed-memory/memory-style.md"), @memory_style)
+    File.write!(Path.join(prompts_dir, "create-plan.md"), @create_plan)
+
+    :ok
+  end
+end
+```
+
+`StagingDirectory.render/4` calls
+`Mnemosyne.Prompts.materialise_into(Path.join(staging.root, "prompts"))`
+as part of its render sequence. Phase prompts reference the
+materialised files via `{{PROMPTS}}/phases/reflect.md`,
+`{{PROMPTS}}/fixed-memory/memory-style.md`, etc.
+
+**`memory-style.md` is read by both reflect and compact.** Reflect is
+lossy-pruning; compact is strictly lossless rewriting. Both read the
+same `memory-style.md` so the rules stay consistent across phases.
+This is a core LLM_CONTEXT design invariant and must be preserved in
+B's phase prompt authoring.
+
+**Customisation is v2.** V1 enforces "use what ships with the daemon
+binary." The bootstrap discipline constraint specifically forbids
+customisation at v1 as a means of forcing honest dogfooding against
+a shared prompt baseline.
+
+### 2.6 Dev-root layout and the Mnemosyne vault
+
+Each project has one Mnemosyne-owned directory (`<project>/mnemosyne/`)
+holding both the plan tree (rooted at `project-root/`) and Tier 1
+knowledge (as a sibling directory). The vault has one symlink per
+project targeting `<project>/mnemosyne/`.
+
+```
+<dev-root>/
+├── Mnemosyne-vault/                       # sub-A owns; B references
+│   ├── .git/
+│   ├── .obsidian/                         # shipped template
+│   ├── mnemosyne.toml                     # sub-A identity marker
+│   ├── daemon.toml                        # sub-F daemon config
+│   ├── routing.ex                         # sub-F declarative routing module
+│   ├── plan-catalog.md                    # sub-F auto-generated catalog
+│   ├── knowledge/                         # Tier 2 global knowledge (sub-A)
+│   ├── experts/                           # sub-N expert declarations
+│   ├── projects/                          # sub-F symlinks
+│   │   ├── Mnemosyne → ../../Mnemosyne/mnemosyne/
+│   │   └── APIAnyware-MacOS → ../../APIAnyware-MacOS/mnemosyne/
+│   └── runtime/
+│       ├── daemon.sock                    # sub-F client socket
+│       ├── daemon.lock                    # sub-D singleton lock
+│       ├── mailboxes/                     # sub-F persisted messages
+│       ├── staging/<qualified-id>/        # B staging dirs (ephemeral)
+│       ├── interrupted/<qualified-id>/    # B forensics (versioned)
+│       ├── ingestion-events/              # sub-E events
+│       └── snapshots/                     # sub-F actor snapshots
+└── <project>/
+    ├── .git/
+    └── mnemosyne/                         # per-project role directory
+        ├── knowledge/                     # Tier 1 per-project
+        └── project-root/                  # sub-F reserved root plan
+            ├── plan-state.md              # required marker (B format)
+            ├── backlog.md
+            ├── memory.md
+            ├── session-log.md
+            ├── latest-session.md          # transient, work-phase only
+            ├── dispatches.yaml            # sub-F transient
+            ├── queries.yaml               # sub-F transient
+            ├── pre-work.sh                # optional, B hook
+            ├── prompt-work.md             # optional per-plan override
+            └── sub-B-phase-cycle/         # nested child plan
+                ├── plan-state.md
+                └── ...
+```
+
+**B's runtime footprint** is narrow:
+
+- `runtime/staging/<qualified-id>/<phase>-<ts>/` (ephemeral, gitignored)
+- `runtime/interrupted/<qualified-id>/<phase>-<ts>/` (versioned, forensic)
+- `plan-state.md` writes at `<project>/mnemosyne/.../<plan>/`
+- `backlog.md`, `memory.md`, `session-log.md`, `latest-session.md`
+  writes inside the plan directory (via copy-back from staging,
+  except the session-log append and latest-session deletion which
+  are direct writes from the runner)
+
+Everything else in `runtime/` belongs to F, D, E, or A.
+
+**Git boundaries:** project repos are sovereign — B only writes files
+inside `<project>/mnemosyne/` and never touches `<project>/.git`. The
+Mnemosyne vault is its own git repo (managed by sub-A), versioning
+knowledge + interrupted forensics + ingestion events, and gitignoring
+staging + locks + socket + mailboxes + snapshots + symlinks.
+
+### 2.7 Session log and `latest-session.md`
+
+`session-log.md` is the audit trail of past cycles, one entry per
+completed session. Entries use ISO 8601 UTC-with-seconds timestamps:
+
+```markdown
+### Session 12 (2026-04-15T14:22:18Z) — sub-B amendment rewrite
+
+- Attempted: rewrite §1–§6 for Elixir/BEAM + four-phase cycle + F pivot.
+- ...
+```
+
+The timestamp is the wall-clock moment the work phase exited, obtained
+via `date -u '+%Y-%m-%dT%H:%M:%SZ'` or Elixir's `DateTime.utc_now/0`
+formatted with `:second` precision.
+
+**`latest-session.md` lifecycle:**
+
+1. Work-phase entry: `PhaseRunner` (step 2 of `run_phase/4`) deletes
+   any stale `latest-session.md` via
+   `File.rm(Path.join(plan_dir, "latest-session.md"))` before the
+   `pre-work.sh` hook runs. This is the defensive cleanup.
+2. During work: the LLM (or human) writes the session entry into
+   `latest-session.md`. The file is transient and is **never read by
+   reflect, compact, or triage phases**.
+3. Work-phase exit: the runner (step 9) appends `latest-session.md`'s
+   contents to `session-log.md` via a write-to-temp-then-rename,
+   then deletes `latest-session.md`. If the work phase wrote nothing,
+   the append is skipped (soft warning, not a hard error — the user
+   may have interrupted before writing).
+4. **No LLM phase ever reads `session-log.md`.** This is a
+   `memory-style.md` invariant: the session log is purely a human
+   audit trail.
+
+---
+
+## 3. Runtime Lifecycle
+
+### 3.1 PlanActor state inside the daemon
+
+```mermaid
+stateDiagram-v2
+    [*] --> Dormant: daemon startup<br/>(VaultDirectory enumerated)
+    Dormant --> Active: {:attach_consumer, _}<br/>or {:run_phase, _}
+    Active --> CrashRecovery: on_start shows<br/>interrupted=true OR<br/>ingestion-fired=false
+    CrashRecovery --> Active: recovery actions complete
+    Active --> PhaseRunning: {:run_phase, _}
+    PhaseRunning --> Active: PhaseRunner returns CleanExit
+    PhaseRunning --> Interrupted: {:interrupt_phase, _}<br/>or executor fault
+    Interrupted --> Active: user dismissal<br/>or takeover decision landed
+    Interrupted --> PhaseRunning: takeover: :manual | :retry_llm
+    Active --> Dormant: idle timeout (5 min)
+    PhaseRunning --> Faulted: unrecoverable executor error
+    Faulted --> Dormant: supervisor restart (bounded)
+    Active --> [*]: daemon SIGTERM
+```
+
+**PlanActor lifecycle is sub-F's scope.** The actor states
+(`Dormant`, `Active`, `PhaseRunning`, `Interrupted`, `Faulted`,
+`ShuttingDown`) are defined in F's design doc §4.4; B's
+`PhaseRunner` only runs while the actor is in `PhaseRunning`, and
+the transitions into and out of that state are driven by F's
+mailbox handling and B's `run_phase/4` return value respectively.
+
+### 3.2 Crash recovery at PlanActor start
+
+Crash recovery runs once, immediately after a PlanActor is spawned
+and reads its `plan-state.md`. The actor inspects the loaded state
+for signs of a prior non-clean exit.
+
+**Scenario A — last phase was interrupted.** `plan-state.md` has
+`interrupted: true`. The staging directory for that phase is preserved
+under `<vault>/runtime/interrupted/<qualified-id>/<phase>-<timestamp>/`.
+
+Recovery: the actor emits a
+`%PhaseLifecycle{kind: :prior_interrupt_surfaced, forensics_dir, ...}`
+typed event on its next attached-consumer attach, offering the user
+a "retry this phase" action. No automatic re-execution — the user
+decides. The `interrupted: true` flag stays set until the user
+retries the phase or explicitly dismisses it via the
+`{:dismiss_interrupt}` message, which clears the flag.
+
+**Scenario B — last reflect exited cleanly but ingestion never fired.**
+`plan-state.md` has `last-exit.phase: reflect`, `last-exit.clean-exit:
+true`, `last-exit.ingestion-fired: false`. The prior daemon crashed
+between reflect's clean end and ingestion's Stage 5 flipping the flag.
+This is the exactly-once firing linchpin.
+
+Recovery: the actor fires the ingestion pipeline on the prior reflect's
+outputs as the first post-Active action. `ingestion-fired` flips to
+`true` at the start of Stage 5 (E's responsibility). Attached
+consumers see ingestion events streaming in before they've taken any
+action, which is correct — it is continuation of a phase that had
+already completed from their perspective.
+
+**Scenario C — everything is fine.** `plan-state.md` shows a clean
+state. Recovery is a no-op.
+
+Crash recovery itself is idempotent: running it twice on the same
+state produces the same result, so a crash *during* recovery leads
+to the same recovery on the next restart.
+
+### 3.3 PhaseRunning — the 13-step flow
+
+When the PlanActor receives a `{:run_phase, next}` message while in
+`Active`, it transitions to `PhaseRunning` and invokes
+`PhaseRunner.run_phase/4` with the stored `PlanContext`, the requested
+phase, the executor module, and `self()` as the parent. The runner
+executes the 13 steps described in §2.3.3. During the call, the
+PlanActor remains in `PhaseRunning`; attached consumers continue to
+receive events because the executor's `emit_fn` closure forwards
+through the actor's mailbox.
+
+Two internal sub-states of PhaseRunning are worth naming for
+interrupt semantics:
+
+- **ExecutorRunning** — `executor.execute/2` is in progress.
+  Interrupts (from `{:interrupt_phase}` messages) propagate through
+  the executor's `interrupt/1` callback (which forwards to the
+  harness adapter's `kill/2` for `LlmHarnessExecutor`, no-op for
+  `ManualEditorExecutor`).
+- **CopyingBack** — `executor.execute/2` has returned cleanly; the
+  runner is running `copy_back/2`. **Interrupts during CopyingBack
+  are not honoured immediately.** The user's interrupt signal is
+  recorded in a pending-interrupt flag in the runner's local map;
+  copy-back runs to completion; then the runner checks the pending
+  flag and, if set, transitions the phase to the Interrupted state
+  immediately after copy-back finishes. This is a deliberate
+  asymmetry — aborting mid-copy risks leaving the plan directory
+  in an inconsistent state, which violates the "hard errors by
+  default, state must always be consistent on disk" principle.
+  Copy-back is short (typically well under a second) and the
+  atomicity guarantee justifies the small wait.
+
+### 3.4 Interrupted and takeover
+
+When PhaseRunning is interrupted, the runner:
+
+1. **Signals `executor.interrupt/1`.** `LlmHarnessExecutor` forwards
+   to the harness adapter's `kill/2` (graceful stop → grace period →
+   force kill via sub-C's two-phase termination). `ManualEditorExecutor`
+   is a no-op.
+2. **Captures any streamed output** into
+   `<vault>/runtime/interrupted/<qualified-id>/<phase>-<ts>/partial-output.log`.
+   The executor's event stream up to the interrupt point is
+   flushed as JSON-Lines records.
+3. **Preserves the staging directory** via
+   `StagingDirectory.preserve_on_interrupt/2`, moving it to
+   `<vault>/runtime/interrupted/<qualified-id>/<phase>-<ts>/staging/`.
+4. **Updates `plan-state.md`**: `interrupted: true`,
+   `last-exit.phase: <current>`, `last-exit.clean-exit: false`. Does
+   **not** transition `current-phase` to the next phase — the plan
+   stays on the interrupted phase.
+5. **Emits `%PhaseLifecycle{kind: :interrupted, phase, forensics_dir, at}`**
+   as a typed event.
+6. **Emits `%PhaseLifecycle{kind: :takeover_offered, phase,
+   forensics_dir, options: [:manual, :retry_llm, :dismiss]}`** — the
+   PlanActor forwards this to attached consumers, which render it as
+   a takeover prompt. The wikilink syntax `[[...]]` in the forensics
+   dir path is Obsidian-native so the notification is immediately
+   actionable when the user opens the vault in Obsidian.
+
+7. **On the PlanActor receiving the user's takeover decision:**
+
+   | Message | Action |
+   |---|---|
+   | `{:takeover, :manual}` | Re-enter PhaseRunning with `ManualEditorExecutor` on the same phase, same plan state, fresh staging dir (re-rendered to discard partial edits). `interrupted` flag cleared at the start of the manual phase. Hooks fire normally on manual exit. |
+   | `{:takeover, :dismiss}` | `interrupted` stays `true`. User will resolve it later or retry via an explicit `{:retry_interrupted_phase}` action. |
+   | `{:takeover, :retry_llm}` | Re-enter PhaseRunning with `LlmHarnessExecutor`, same phase, fresh staging dir. |
+
+The three-option takeover is a user-convenience refinement — without
+`:retry_llm`, a user who interrupted by mistake would have to dismiss
+and then manually re-trigger `{:run_phase, _}`, which is two round
+trips where one would do.
+
+### 3.5 Phase-exit hooks
+
+B runs three kinds of hooks at phase exit, depending on phase and
+outcome:
+
+| Hook | Owner | When |
+|---|---|---|
+| Sub-E reflect-exit ingestion | sub-E | Clean reflect exit only; non-blocking; exactly-once via `ingestion-fired` flag |
+| Sub-F `DispatchProcessor.process/2` | sub-F | Clean work, reflect, or triage exit (**not** compact) |
+| Sub-F `QueryProcessor.process/2` | sub-F | Clean work, reflect, or triage exit (**not** compact) |
+
+All three are invoked from inside `run_phase/4` as module-function
+calls on the hook modules. They are synchronous from the runner's
+perspective (for hook-ordering determinism) but F's processors have
+their own internal bounded-time contracts. The ingestion hook is
+**non-blocking** — B dispatches it to a task under the PlanActor's
+supervision so `run_phase/4` can return control to the PlanActor
+immediately.
+
+**Compact is strictly lossless.** The compact executor does not
+emit dispatches or queries, and its only permitted file mutation is
+a rewrite of `memory.md`. Running dispatch/query processors after
+compact would be a waste of cycles at best and a correctness risk
+at worst. B skips both processors for compact.
+
+---
+
+## 4. External Interfaces
+
+B touches four sibling sub-project boundaries through well-defined
+interfaces. Each is a small, stable shape that B depends on *by name*
+and sibling sub-projects implement.
+
+### 4.1 `Mnemosyne.HarnessAdapter` — consumed from sub-C
+
+`LlmHarnessExecutor` consumes a session GenServer spawned by a module
+implementing `Mnemosyne.HarnessAdapter` (sub-C). B does not implement
+the adapter itself; B's contract is entirely on the consumer side.
+
+Sub-C's §11.1 (the rewritten Session-11 design) defines two surviving
+requirements from B on C; B restates them here:
+
+**Requirement 1 — `%Mnemosyne.Event.SessionLifecycle{}` is a consumed
+typed event.** B's `LlmHarnessExecutor` pattern-matches on:
+
+- `%SessionLifecycle{transition: :ready}` — C's session is initialized
+  and has emitted its `system/init` event. B treats this as the
+  "executor may now send the first user message" signal.
+- `%SessionLifecycle{transition: {:turn_complete, subtype}}` —
+  protocol-level "model finished emitting tokens" signal from C's
+  `result` parser. B forwards this to sub-M but does **not** treat
+  it as end-of-phase. Task-level completion is the sentinel matcher's
+  responsibility (Requirement 2).
+- `%SessionLifecycle{transition: {:exited, reason}}` — C's session
+  has terminated. B treats this as the terminal signal and returns
+  from `execute/2` with `:ok | {:error, reason}` depending on
+  `reason`.
+
+**Requirement 2 — sliding-buffer sentinel matcher over `%HarnessOutput{kind:
+:stdout}` events.** B runs a matcher on every stdout event. Sentinels
+are defined in the phase prompts; for v1 the shared phase files end
+with `when finished say READY FOR THE NEXT PHASE`, so the sentinel
+is the literal string `READY FOR THE NEXT PHASE`. The matcher is
+sliding-buffer based with window bounded to `sentinel_size - 1`
+bytes, validated against single-chunk, two-chunk split,
+grapheme-by-grapheme drip, false-prefix, and false-overlap cases
+(see the BEAM PTY spike at `spikes/beam_pty/`).
+
+When the matcher fires, `LlmHarnessExecutor` emits
+`{:phase_completion_detected, sentinel}` to its own message queue.
+After the next `%HarnessOutput{}` event (or after a short grace
+window), the executor calls `adapter.kill(session_pid, :task_complete)`
+to gracefully shut down the session and returns `:ok` from `execute/2`.
+The sentinel matcher lives in B (not C) because sentinels are coupled
+to phase prompts (which B owns) and the mechanism is harness-agnostic.
+
+**Amendments 1–3 from the original Session-6 brainstorm are eliminated.**
+The Rust trait-object plumbing (`&mut self` → `&self`, `Box<dyn>` →
+`Arc<dyn>`, `Send + Sync`) has no BEAM analogue. B consumes the
+session GenServer via `attach_consumer/2` and `handle_info/2`; there
+is no trait-object lifetime plumbing to amend.
+
+**Adapter contract (restated from sub-C's design doc):**
+
+```elixir
+defmodule Mnemosyne.HarnessAdapter do
+  @type spawn_args :: %{
+          prompt: binary(),           # first user message as binary
+          working_dir: String.t(),    # set to staging root
+          tool_profile: :research_broad | :ingestion_minimal,
+          session_name: String.t(),
+          extra_flags: [String.t()]   # cmux mitigation + phase-specific
+        }
+
+  @callback kind() :: :claude_code | :fixture_replay
+  @callback spawn(spawn_args()) :: {:ok, session_pid :: pid()} | {:error, term()}
+end
+
+# Session GenServer protocol (from sub-C §4.2):
+#   GenServer.call(session_pid, {:attach_consumer, consumer_pid})
+#   GenServer.call(session_pid, {:send_user_message, binary})
+#   GenServer.call(session_pid, {:kill, reason})
+#   send(consumer_pid, {:event, %Mnemosyne.Event.HarnessOutput{} | ...})
+```
+
+**Contract requirements B imposes on sub-C** (recorded as
+cross-sub-project requirements in §6):
+
+1. **`spawn/1` is cheap.** Cold-spawn latency target: p95 < 5 s per
+   session across N≥10 dogfood cycles (C's C-1 gate). Warm-pool reuse
+   is C's implementation problem, not B's.
+2. **Tool profile enforcement is C's responsibility.** A harness that
+   attempts a disallowed tool must fail the session at the adapter
+   level (via `--disallowed-tools` spawn flags and defence-in-depth
+   stream-side rejection), not be permitted via prompt discipline.
+3. **`kill/2` is non-blocking and idempotent.** Actual termination
+   completes asynchronously and is observed via the
+   `%SessionLifecycle{transition: {:exited, _}}` event.
+4. **`%HarnessOutput{kind: :stdout}` events are delivered as complete
+   NDJSON lines**, one per event. Chunking is fine; the sentinel
+   matcher handles that.
+5. **`FixtureReplay` is a first-class adapter variant.** Used by
+   B's integration tests and sub-E's pipeline tests. Implements the
+   same behaviour and session GenServer protocol.
+6. **Working directory is the staging root**, not the plan dir or
+   project root. The harness session starts with cwd set to the
+   staging directory so file reads via tools land on pre-substituted
+   copies.
+7. **Session name is passed to the harness's session-tracking id.**
+   B passes `<phase>-<qualified-id-sanitised>`.
+8. **`--setting-sources project,local --no-session-persistence`**
+   must be on every daemon-spawned Claude Code session. This is
+   cmux-noise mitigation from the BEAM PTY spike.
+9. **No harness-side control channel.** Observation is a different
+   thing — Mnemosyne reading the harness's structured output and
+   reacting on its own side is exactly what the stream-json +
+   `SessionLifecycle` events enable. What is forbidden is *control*
+   flowing from harness to Mnemosyne via slash commands or programmatic
+   callbacks. The tool-call boundary (sub-C §4.5) is an *injection*
+   mechanism, not a control channel.
+
+### 4.2 `Mnemosyne.ReflectExitHook` — exposed to sub-E
+
+After a reflect phase completes cleanly, `PhaseRunner.run_phase/4`
+calls sub-E's ingestion pipeline non-blockingly, before transitioning
+to compact (or skipping to triage if the compact trigger is not met).
+
+```elixir
+defmodule Mnemosyne.ReflectExitHook do
+  @type context :: %{
+          qualified_id: String.t(),
+          plan_dir: String.t(),
+          vault_runtime_dir: String.t(),
+          session_log_latest_entry: binary(),
+          ingestion_fired_setter: (-> :ok)
+        }
+
+  @callback on_reflect_exit(context()) :: :ok
+end
+```
+
+**Contract semantics:**
+
+1. **Called by `PhaseRunner`** between steps 10 (persist new
+   `plan-state.md`) and step 13 (run F's phase-exit hooks), only on
+   clean reflect exit and only when `last-exit.ingestion-fired` was
+   `false` before B ran. The `ingestion_fired_setter` closure is
+   called by E's Stage 5 at the start of Stage 5, flipping the flag.
+   B does not flip it.
+2. **Non-blocking.** B invokes the hook via
+   `Task.Supervisor.start_child/3` under the PlanActor's task
+   supervisor and returns control to the runner immediately. The
+   task runs concurrently with the runner's subsequent steps.
+3. **Non-blocking error handling.** If the ingestion pipeline
+   crashes, sub-E's own event log records the failure. B does not
+   observe ingestion failures — they are E's responsibility and
+   surface via E's event stream (forwarded through sub-M's
+   `:telemetry` boundary as `Mnemosyne.Event.Ingestion.*` variants)
+   to attached consumers. B's phase cycle continues either way.
+4. **Exactly-once firing is the joint responsibility** of B (only
+   calls the hook under the right preconditions) and E (flips
+   `ingestion-fired` to `true` before any Stage 5 writes). If E
+   crashes after flipping the flag but before writing, the missed
+   cycle is not retried automatically — the user can manually
+   trigger re-ingestion via an explicit message to the PlanActor.
+5. **No callback from E back to B.** E does not tell B "ingestion
+   done." E emits typed events through sub-M's telemetry boundary;
+   the PlanActor and its attached consumers observe them like any
+   other event.
+
+### 4.3 `DispatchProcessor` and `QueryProcessor` — owned by sub-F
+
+B's `PhaseRunner` invokes F's two phase-exit processors after every
+clean work, reflect, or triage phase (not compact). B calls them as
+module functions and does not own their state.
+
+```elixir
+# Signatures restated from sub-F's design doc §5.2:
+Mnemosyne.DispatchProcessor.process(ctx.plan_dir, emit_fn)
+Mnemosyne.QueryProcessor.process(ctx.plan_dir, emit_fn)
+```
+
+**Contract semantics:**
+
+1. **Synchronous from B's perspective.** The runner awaits each
+   processor's return before proceeding. F's processors are
+   internally time-bounded (daemon config default 5 minutes for
+   Level 2 routing agents, per F's design).
+2. **File-based I/O.** Each processor reads `<plan>/dispatches.yaml`
+   or `<plan>/queries.yaml` if present, routes entries via F's
+   router, writes outcomes to the relevant backlog sections, and
+   deletes the source file on full success.
+3. **Crash-recovery protocol.** F's processors use marker files
+   (`.processing` suffix) and cursor-based resume. A daemon crash
+   mid-processing leaves the marker; on restart, the processor
+   picks up where it left off. This is F's scope; B only needs to
+   invoke the processors at the right time.
+4. **Compact is excluded.** Compact is strictly lossless memory
+   rewriting and does not emit new dispatches or queries.
+5. **Failure propagation.** A processor failure is a hard error at
+   the runner level: the phase outcome becomes `:executor_failed`
+   and the staging directory is preserved (if still present). The
+   phase is not transitioned; the user must resolve the processing
+   failure before advancing.
+
+### 4.4 Typed event emission to sub-M
+
+B emits typed events via sub-M's `:telemetry` + `Mnemosyne.Event.*`
+struct boundary. The struct set B participates in:
+
+| Struct | Emitted at | Fields |
+|---|---|---|
+| `%PhaseLifecycle{kind: :started, ...}` | `run_phase/4` step 5 | `phase, executor_kind, qualified_id, at` |
+| `%PhaseLifecycle{kind: :exited_clean, ...}` | step 11 | `phase, transitioned_to, qualified_id, at` |
+| `%PhaseLifecycle{kind: :reflect_hook_fired, ...}` | step 12 | `qualified_id, at` |
+| `%PhaseLifecycle{kind: :interrupted, ...}` | §3.4 step 5 | `phase, forensics_dir, qualified_id, at` |
+| `%PhaseLifecycle{kind: :executor_failed, ...}` | on error branches | `phase, error, qualified_id, at` |
+| `%PhaseLifecycle{kind: :takeover_offered, ...}` | §3.4 step 6 | `phase, forensics_dir, options, qualified_id, at` |
+| `%PhaseLifecycle{kind: :prior_interrupt_surfaced, ...}` | §3.2 Scenario A | `phase, forensics_dir, qualified_id, at` |
+| `%HarnessOutput{}` (forwarded) | Every stdout/stderr event from C | consumed, not produced, but re-emitted via `emit_fn` |
+| `%SessionLifecycle{}` (forwarded) | Every session lifecycle event from C | same — forwarded |
+
+B does not define the structs (sub-M owns the sealed set). B is
+responsible for emitting them at the right call sites.
+
+### 4.5 PlanActor message contract (consumed from sub-F)
+
+B does not define the PlanActor's full message contract — that is
+sub-F's scope. B contributes the following messages F must accept:
+
+| Message | B's semantics |
+|---|---|
+| `{:run_phase, phase}` | Runner invokes `run_phase/4` with `phase` as the target |
+| `{:interrupt_phase, reason}` | Runner signals the executor's `interrupt/1` callback |
+| `{:takeover, :manual \| :retry_llm \| :dismiss}` | After an interrupted phase, select the takeover path |
+| `{:retry_interrupted_phase}` | Explicit retry (re-enter PhaseRunning with a fresh executor) |
+| `{:dismiss_interrupt}` | Clear the `interrupted: true` flag without retrying |
+
+F's PlanActor `handle_info/2` handles each of these and delegates to
+the appropriate `PhaseRunner` or `PlanState` call.
 
 ---
 
@@ -1486,168 +1523,84 @@ design mitigates this by:
 
 ### 5.1 Testing strategy
 
-Three tiers:
+Three layers, mirroring sub-C's layered approach:
 
-**Tier 1 — Unit tests (pure Rust, no LLM, no filesystem beyond tempdir).**
-Every type from §2.2 has dedicated unit tests with no external
-dependencies:
+**Layer 1 — Unit tests (pure Elixir, no LLM, no filesystem beyond
+tempdir).** Every module from §2.2 has dedicated unit tests with no
+external dependencies:
 
-| Type | Unit test coverage |
-|------|---------------------|
-| `PlanState` | YAML frontmatter parse/serialise round-trip, `schema-version` rejection, `ingestion-fired` flag semantics, atomic-write-via-rename, corrupted-file handling (hard error) |
-| `StagingDirectory::render` | correct substitution across all four placeholders, correct project file allowlist, nested directory handling, binary file passthrough (don't substitute in non-text files), symlink handling (refuse to follow into project repos), `{{PROMPTS}}` materialisation |
-| `StagingDirectory::copy_back` | clean write-through of edited files, rejection of writes outside allowed paths, unchanged-file detection via content hash, new-file propagation, reverse substitution correctness |
-| `PhaseRunner` (with `FixtureReplayExecutor`) | phase transition legality, state-file persistence at each step, hook firing order, event channel emission, interrupt rejection during CopyingBack |
-| `PlanState` transitions | legal vs. illegal transitions, `interrupted: true` blocking next-phase without explicit dismiss |
-| Symlink rescan | correct creation, correct GC of dangling links, cycle detection (hard error), relative-path preservation |
-| `RatatuiDriver` | keybind dispatch to `TuiAction`, event rendering, pane layout (via ratatui's snapshot testing) |
+| Module | Unit test coverage |
+|---|---|
+| `Mnemosyne.PlanState` | YAML frontmatter parse/serialise round-trip, `schema-version` rejection (hard error), `description` length cap + placeholder rejection, `ingestion-fired` flag semantics, atomic-write-via-rename, every frontmatter field's kebab-case/snake_case mapping |
+| `Mnemosyne.Substitution` | All five placeholders substituted correctly; longest-match-first reverse ordering against prefix-collision inputs; forward-only semantics for `{{PROMPTS}}` and `{{VAULT_CATALOG}}`; round-trip for the three path placeholders; edge cases (empty file, no placeholders, repeated placeholders, binary file passthrough) |
+| `Mnemosyne.StagingDirectory.render/4` | Correct forward substitution across all five placeholders; embedded-prompt materialisation preserving subdirectory layout; allowlist resolution; symlink rejection (hard error); child-plan-descent rejection (hard error); `knowledge/` sibling skip; binary file passthrough |
+| `Mnemosyne.StagingDirectory.copy_back/2` | Clean write-through; rejection of writes outside allowed paths (hard error); unchanged-file detection via content hash; new-file propagation; reverse-substitution correctness; atomic-rename semantics |
+| `Mnemosyne.Prompts` | `materialise_into/1` produces the expected files at the expected paths; binary-level byte equality with vendored sources; subdirectory layout preserved; the pre-overhaul filenames (`backlog-plan.md`, `create-a-multi-session-plan.md`) do not appear |
+| `Mnemosyne.Sentinel.SlidingBuffer` | Single-chunk match; two-chunk split; grapheme drip; false prefix; false overlap; window bound = `sentinel_size - 1` |
+| `Mnemosyne.PhaseRunner` (with `FixtureReplayExecutor`) | Full work → reflect → compact → triage → work round-trip; full work → reflect → (compact-skipped) → triage → work round-trip; illegal transition rejection; copy-back rejection aborts cleanly; reflect hook fires exactly once on reflect exit; reflect hook does NOT fire on work/compact/triage exit; F processors fire on work/reflect/triage, skip on compact; state persistence at every transition; event emission order |
+| `Mnemosyne.PreWorkHook` | Present + executable → invoked; present + non-executable → skipped; absent → skipped; non-zero exit → hard error; invoked only before work (not reflect/compact/triage); invoked after `latest-session.md` cleanup |
 
-Unit tests run in milliseconds against tempdirs, zero external tooling.
+Layer 1 runs in milliseconds against tempdirs, zero external tooling.
 
-**Tier 2 — Integration tests (end-to-end core, fixture-replay harness).**
-The full `PhaseRunner` + `StagingDirectory` + executor pipeline
-exercised against a small in-repo fixture plan. The executor is
-`FixtureReplayExecutor` (reading captured output streams) or
-`LlmHarnessExecutor` backed by a `FixtureReplayAdapter`. No live LLM.
+**Layer 2 — Integration tests (end-to-end PhaseRunner, `FixtureReplay`
+adapter).** The full `PhaseRunner` + `StagingDirectory` + executor
+pipeline exercised inside a minimal PlanActor stub against an in-repo
+fixture plan. The executor is `FixtureReplayExecutor` or
+`LlmHarnessExecutor` backed by a `FixtureReplay` adapter. No live LLM.
 
 Each integration test is a complete scripted run: fixture plan →
-scripted user actions via `HeadlessDriver` → assertions against the
-final plan state and emitted events. Test inputs are markdown fixture
-directories committed into `tests/fixtures/plans/`. Test outputs are
-JSON-serialised event streams committed into `tests/fixtures/expected/`.
+scripted PlanActor messages → assertions against the final plan state
+and emitted typed events. Test inputs are markdown fixture directories
+committed into `test/fixtures/plans/`. Test outputs are serialised
+event streams committed into `test/fixtures/expected/`.
 
-The same fixture-replay adapter is used by sub-project E's ingestion
-pipeline tests. Shared infrastructure.
+The same `FixtureReplay` adapter is shared with sub-project E's
+ingestion pipeline tests.
 
-**Tier 3 — Live smoke tests (real Claude Code, CI-gated).** Manual or
-CI-scheduled runs against a real Claude Code installation with a real
-fixture plan. Validates structural invariants only (phases complete,
-no hard errors, lock acquired/released, staging cleaned up,
+**Layer 3 — Live smoke tests (real Claude Code, CI-gated, tagged
+`:live`).** Manual or CI-scheduled runs against a real Claude Code
+installation with a real fixture plan. Validates structural invariants
+only (phases complete, no hard errors, staging cleaned up,
 `plan-state.md` consistent, ingestion event log written). Not
 validated against specific LLM output — that is inherently
 non-deterministic.
 
-Live smoke tests run on a clean-room dev-root layout created per test
-run, torn down afterward. No test contaminates the user's real vault.
+Live smoke tests run on a clean-room dev-root layout created per
+test run, torn down afterward. No test contaminates the user's real
+vault.
 
-### 5.2 Obsidian + symlinks validation spike (cross-platform)
+### 5.2 Obsidian + symlinks validation spike — DONE
 
-A pre-implementation blocker. The layout in §2.3 assumes Obsidian
-follows symlinks natively for file tree rendering, graph view,
-wikilink resolution, Dataview queries, and file-watcher updates on
-macOS and Linux. This has not been personally verified against current
-Obsidian releases, and Obsidian's release notes are sparse on symlink
-behaviour. If the assumption is wrong, the entire symlink layout
-collapses and requires redesign.
-
-The validation spike uses GUIVisionVMDriver's golden images
-(`guivision-golden-macos-tahoe` and `guivision-golden-linux-24.04`) to
-run the same validation on both target platforms with reproducible
-results.
-
-```mermaid
-flowchart TB
-    Start([Start spike]) --> GoldenCheck{Golden images&lt;br/&gt;available?}
-    GoldenCheck -->|no| Build["Build golden images&lt;br/&gt;via vm-create-golden-*.sh"]
-    GoldenCheck -->|yes| Fixture[Prepare test vault fixture]
-    Build --> Fixture
-
-    Fixture --> Linux["<b>Linux</b><br/>vm-start.sh --platform linux"]
-    Fixture --> MacOS["<b>macOS</b><br/>vm-start.sh"]
-
-    Linux --> LInstall["guivision exec:&lt;br/&gt;install Obsidian"]
-    MacOS --> MInstall["guivision exec:&lt;br/&gt;install Obsidian"]
-
-    LInstall --> LUpload[guivision upload test vault]
-    MInstall --> MUpload[guivision upload test vault]
-
-    LUpload --> LSymlinks["guivision exec:&lt;br/&gt;create symlinks in vault/projects/*"]
-    MUpload --> MSymlinks["guivision exec:&lt;br/&gt;create symlinks in vault/projects/*"]
-
-    LSymlinks --> LLaunch[Launch Obsidian via VNC]
-    MSymlinks --> MLaunch[Launch Obsidian via VNC]
-
-    LLaunch --> LCheck["Validate 7 checks (see table)"]
-    MLaunch --> MCheck["Validate 7 checks (see table)"]
-
-    LCheck --> LEvidence[Capture screenshots + agent snapshots]
-    MCheck --> MEvidence[Capture screenshots + agent snapshots]
-
-    LEvidence --> Verdict{Both platforms&lt;br/&gt;pass?}
-    MEvidence --> Verdict
-
-    Verdict -->|yes| Proceed([Proceed with implementation])
-    Verdict -->|no| Fallback["Redesign: hard-copy + two-way sync"]
-```
-
-**Validation checks (same list for both platforms):**
-
-1. File tree rendering: symlinked plans appear in Obsidian's file tree
-   with the same navigation as native files.
-2. File opening: clicking a symlinked plan file opens it in Obsidian's
-   editor; content renders correctly (markdown, frontmatter
-   recognised).
-3. Graph view: symlinked notes appear as nodes in the graph view,
-   linked to their wikilink targets.
-4. Wikilink resolution: `[[sub-B-phase-cycle]]` from inside a
-   symlinked note resolves correctly to its target within or outside
-   the symlink tree.
-5. Dataview queries: a `TABLE` query filtering on frontmatter fields
-   across the `plans/` subdirectory returns rows from symlinked
-   content.
-6. File-watcher behaviour: editing a symlinked file externally (via
-   `guivision exec` writing to the canonical project path) is picked
-   up by Obsidian's file watcher and the UI updates.
-7. Backlinks: a note outside the symlink tree referencing
-   `[[plan-name]]` inside the symlink tree appears in the target's
-   backlinks pane.
-
-Each check's result is captured via `guivision agent snapshot --mode
-interact` (UI state) and `guivision screenshot` (visual evidence).
-Captured outputs are committed to `tests/fixtures/obsidian-validation/`
-so the spike is re-runnable and the evidence is version-controlled.
-
-**Failure cascade:**
-
-1. If only one platform fails: document the affected platform as a v1
-   non-target, proceed on the supporting platform. Unacceptable for
-   Linux (v1 target), so effectively only applies to the future Windows
-   case.
-2. If both platforms fail: switch to the hard-copy + two-way-sync
-   fallback. `StagingDirectory` and `PhaseRunner` abstractions are
-   unchanged; only the vault's `projects/` subdirectory changes from
-   a symlink tree to a mirrored copy tree with Mnemosyne handling
-   bi-directional sync on each plan-state write.
-3. If specific Obsidian plugins fail but core features work (e.g.,
-   Dataview has a symlink bug but file tree + wikilinks + graph view
-   work): document the failing plugin as a known limitation, offer
-   a workaround, do not block Path 1.
-
-**Windows is v2.** GUIVisionVMDriver has a `guivision-golden-windows-11`
-image and the spike could run on Windows, but Windows symlink creation
-requires Developer Mode or elevated permissions and Mnemosyne v1 does
-not target Windows. Deferred to sub-project K's portability work.
+The cross-platform validation spike **passed 6/6 on macOS and Linux**
+in Session 5 (2026-04-13) of the orchestrator plan. Evidence at
+`tests/fixtures/obsidian-validation/results/{macos,linux}/`. The
+symlink-based vault layout stands; the hard-copy fallback is not
+needed. Both platforms verified: file tree rendering, file opening,
+graph view across symlinks, wikilink resolution, Dataview queries
+across symlinked frontmatter, file watcher updates. This spike was
+a pre-implementation blocker for B; it is now cleared.
 
 ### 5.3 Integration-over-reinvention table
 
-Per the cross-cutting decision in the seed plan's memory, every
-sub-project brainstorm must surface at least one "what existing tool
-covers this ground?" question. B's answers:
+Per the cross-cutting decision in the orchestrator memory, every
+sub-project brainstorm must surface "what existing tool covers this
+ground?" B's answers, re-cast for the Elixir runtime:
 
-| Layer | Existing tool / crate considered | Decision | Rationale |
-|-------|----------------------------------|----------|-----------|
-| Phase state machine | `statig`, `rust-fsm`, `sm`, `typestate` | **Hand-roll** (~50 lines of match) | 3 phases, linear transitions, minimal guard logic. FSM crates are right for richer state (nested states, history, fan-out). Not worth the dependency here. Reassess in v2 if the state machine grows. |
-| Placeholder substitution | `tera`, `handlebars`, `minijinja`, `regex::Regex::replace_all` | **`regex` crate with a static precompiled pattern** | 4 placeholders. Templating engines are overkill. `regex` is already a transitive dependency. |
-| Plan-state file format | `toml`, `serde_yaml`, `serde_yaml` + `gray_matter` | **`serde_yaml` + `gray_matter`** for markdown-with-frontmatter parsing | Obsidian-native format dictates YAML frontmatter in markdown. `gray_matter` is the canonical Obsidian-compatible Rust crate. |
-| Terminal UI | `ratatui` + `crossterm`, `cursive`, `termion`, `tui-rs` (deprecated) | **`ratatui` + `crossterm`** | Most actively maintained fork of mature tui-rs. Cross-platform. Standard choice. |
-| Symlink creation and traversal | `std::os::unix::fs::symlink`, `same-file` for cycle detection | **stdlib + `same-file`** | Stdlib handles the primitive; `same-file` handles the cycle invariant. No higher-level crate adds value. |
-| Atomic file writes | `atomicwrites` crate, hand-rolled `tempfile` + `rename` | **Hand-roll with stdlib `tempfile` + `std::fs::rename`** | Atomic rename is a one-liner on Unix; `tempfile` is already a dependency. The `atomicwrites` crate adds a Windows fsync story v1 doesn't need. Explicit silent-reinvention-risk justification: the alternative is a 15-line dependency for a 3-line primitive; Windows robustness is v2. |
-| File watching | `notify`, `watchexec` | **Not used in v1** | Explicit symlink rescan is simpler and predictable. File watching adds cross-platform flakiness and surprise. Reassess in v2 if a "notify Mnemosyne when Obsidian creates a new plan" workflow emerges. |
-| JSON lines for IPC protocol | `serde_json` + manual line framing, `serde_jsonlines` | **`serde_json` + manual newline framing** | Trivial enough that a dedicated crate is overkill; `serde_json` is already used elsewhere. |
-| Process spawning + PTY | (sub-project C concern) | **Deferred to C** | B calls C's adapter; B does not pick the PTY crate. |
-| Advisory file locking | `fs2::FileExt::lock_exclusive`, `fd-lock`, `flock` via libc | **(sub-project D concern)** | D picks. B's contract is "call `plan_lock.acquire()` on startup; release on drop." |
-| Obsidian integration | Dataview, Templater, Canvas, obsidian-terminal, obsidian-execute-code | **Committed target, integrated via file format conventions** | Obsidian is the committed explorer (decision trail #7). B's contribution is producing Obsidian-native files Dataview can query. Deeper integration (plugin client) is sub-project K. |
-| LLM wiki / knowledge graph tooling | Karpathy's LLM Wiki concept, Infonodus-style network analysis | **Obsidian is the consuming tool, v1; enhanced graph/network analysis via Obsidian's native graph view + plugins** | The Obsidian-as-committed-explorer decision subsumes this. Future sub-project K may surface richer graph/wiki features via a custom plugin, but v1 relies on Obsidian's built-in graph view and Dataview. |
+| Layer | Existing tool / library considered | Decision | Rationale |
+|---|---|---|---|
+| Phase state machine | `gen_statem`, custom pattern-matched state map | **Pattern-matched module** (~60 lines of clauses + `run_phase/4`) | 4 phases, linear transitions, minimal guard logic. `gen_statem` is right for richer state machines (nested, history, fan-out). Not worth it here. |
+| Placeholder substitution | `EEx`, `Mustache`, custom `String.replace/3` with precompiled patterns | **Custom `String.replace/3` + precompiled regex** | 5 placeholders, well-known tokens. Templating engines add surface area we don't need. |
+| Plan-state file format | `yaml_elixir`, `fast_yaml`, hand-rolled parser | **`yaml_elixir`** (new hex dep) | Obsidian-native frontmatter format dictates YAML. `yaml_elixir` is pure Elixir, no native deps. |
+| Markdown + YAML frontmatter parsing | `earmark`, `nimble_parsec`, direct regex split | **Direct split at `---` boundaries + `yaml_elixir` for frontmatter** | We do not render markdown; we only need to round-trip the frontmatter. A two-line split is enough. |
+| Atomic file writes | `File.write/3` + rename, `atomicwrites` ports | **`File.write/3` via temp file + `File.rename/2`** | Stdlib handles atomic rename on Unix. |
+| Symlink creation and traversal | stdlib `File.ln_s/2` + path walking | **Stdlib** | Staging-time symlink rejection is a simple check: resolve, compare prefix, reject. |
+| File watching | `file_system`, `inotify-tools` | **Not used in v1** | Explicit rescan is simpler and predictable. File watching adds cross-platform flakiness. |
+| Harness adapter | sub-project C | **Deferred to C** | B consumes C's session GenServer via the `attach_consumer/2` contract. |
+| Singleton lock | sub-project D | **Deferred to D** | D's daemon-wide flock at `<vault>/runtime/daemon.lock`. |
+| Vault discovery | sub-project A | **Deferred to A** | A's `verify_vault` + `mnemosyne.toml` marker. |
+| Actor model | OTP GenServer + DynamicSupervisor | **Stdlib OTP via sub-F's PlanActor** | B runs inside F's PlanActor; no custom actor framework. |
+| Telemetry transport | sub-project M's `:telemetry` + typed structs | **Stdlib `:telemetry` via sub-M boundary** | B emits structs; M handles transport. |
+| Obsidian integration | Obsidian as explorer (decision) | **Committed target, integrated via file-format conventions** | B produces Obsidian-native files; Dataview + wikilinks handle the rest. |
 
 No silent reinvention. Every decision to hand-roll is justified
 against named alternatives.
@@ -1656,112 +1609,108 @@ against named alternatives.
 
 Ranked by impact × likelihood. Each has a mitigation path.
 
-**Risk 1 — Obsidian + symlinks behaviour is not what we think it is**
-*(HIGH impact, MEDIUM likelihood).*
+**Risk 1 — Compact-trigger heuristic misfires.** *(MEDIUM impact,
+LOW likelihood)*. The `wc -w memory.md > compact-baseline + HEADROOM`
+heuristic may skip compact when it should run, or invoke compact
+when skipping would have sufficed. Cost of a false skip: memory.md
+drifts; cost of a false invoke: a wasted phase invocation.
 
-The §2.3 layout assumes Obsidian on macOS and Linux follows symlinks
-natively for file tree, graph view, wikilinks, Dataview, and file
-watching. Not personally verified against current Obsidian releases.
-If wrong, the entire symlink layout collapses.
+**Mitigation:** mirror LLM_CONTEXT's upstream algorithm exactly
+(`wc -w` is the canonical measure; HEADROOM is the same constant
+at 1500 words); port `run-plan.sh`'s logic line-by-line in the
+first Layer-1 test. Revisit the heuristic if dogfood cycles reveal
+recurring false positives or negatives.
 
-**Mitigation:** the §5.2 cross-platform validation spike runs before
-any other sub-B implementation task. If the spike fails, the fallback
-is hard-copy two-way-sync (more code, but B's abstractions hold).
-B's design remains valid either way — the `StagingDirectory`
-mechanism is independent of whether plans are symlinked or copied
-into the vault.
+**Risk 2 — Harness adapter cold-spawn latency.** *(MEDIUM impact,
+MEDIUM likelihood)*. Claude Code cold-spawn takes 2–5 seconds in
+practice. Each full cycle fires ≥3 harness sessions plus N+1 from
+sub-E's ingestion pipeline. Sub-C's C-1 gate requires p95 < 5 s
+across N≥10 cycles.
 
-**Risk 2 — Harness adapter cold-spawn latency**
-*(MEDIUM impact, MEDIUM likelihood).*
+**Mitigation:** sub-C addresses warm-pool reuse (v1.5+) if cold-spawn
+proves painful. B's design works with cold-spawn.
 
-Covered in sub-project E's design doc; B inherits it. Claude Code
-cold-spawn takes 2–5 seconds in practice. Each full cycle fires ≥3
-harness sessions plus N+1 from sub-project E's ingestion pipeline.
+**Risk 3 — Sentinel matcher false positives.** *(MEDIUM impact,
+LOW likelihood)*. The LLM might echo the sentinel text inside a
+code block or quoted example, causing premature phase exit.
 
-**Mitigation:** sub-project C addresses warm-pool reuse if cold-spawn
-proves painful. B does not assume warm-pool — its design works with
-cold-spawn.
+**Mitigation:** (a) phase prompts instruct the LLM to emit the
+sentinel as a bare line, not inside any code block. (b) the matcher
+uses the full sentinel text (≥20 characters) making accidental
+matches very unlikely. (c) Layer-1 tests exercise the drip, split,
+and false-overlap cases. (d) Layer-3 live smoke runs the full
+cycle against real Claude Code with the real sentinel.
 
-**Risk 3 — Concurrent edits via two paths**
-*(LOW impact, LOW likelihood).*
+**Risk 4 — Concurrent edits via two paths.** *(LOW impact, LOW
+likelihood)*. A user edits `<project>/mnemosyne/project-root/.../memory.md`
+directly in Obsidian while the daemon is running a phase on the
+same file via the vault symlink. The daemon holds the daemon-wide
+singleton lock (sub-D) but the user isn't participating in the
+locking.
 
-If a user edits `<project>/mnemosyne/plans/<plan>/memory.md` directly
-in their editor while Mnemosyne is running a phase on the same file
-via the vault symlink, there's a race. Mnemosyne holds the per-plan
-advisory lock, but the user isn't participating in the locking.
+**Mitigation:** document the "don't edit plan files outside the
+daemon while a phase is running" rule. V2: a file-modification-time
+check in `copy_back/2` that detects "file was modified on disk
+after staging render" and raises a hard error with a reconcile
+prompt. Sub-D's collapsed-scope brainstorm may surface a shared
+mechanism.
 
-**Mitigation:** document the "don't edit plan files outside Mnemosyne
-while a phase is running" rule. Consider (v2) a file-modification-time
-check in `copy_back` that detects "file was modified on disk after
-Mnemosyne's staging render" and raises a hard error with a reconcile
-prompt.
-
-**Risk 4 — IPC boundary design drift**
-*(LOW impact, MEDIUM likelihood).*
-
-If the `InteractionDriver` boundary is drawn wrong (e.g., passes a
-`&mut` reference across the trait, leaks a Rust-specific type into a
-method signature), future Obsidian plugin work (sub-project K) hits
-rework despite the hardening intent.
-
-**Mitigation:** `IpcDriver` shipped in v1 is the compile-time
-enforcement mechanism. Any method added to `InteractionDriver` that
-can't be implemented by `IpcDriver` fails to compile. This is the
-value of shipping `IpcDriver` in v1 even with no client attached.
-
-**Risk 5 — `schema-version` management discipline**
-*(LOW impact, LOW likelihood).*
-
-Every schema change requires a version bump, a migration function,
-and parser rejection of unknown higher versions. Process risk, not
-technical.
+**Risk 5 — `schema-version` management discipline.** *(LOW impact,
+LOW likelihood)*. Every schema change requires a version bump, a
+migration function, and parser rejection of unknown higher versions.
+Process risk, not technical.
 
 **Mitigation:** mechanical discipline enforced by a dedicated test
 (`parser rejects schema-version 99 as a hard error`) and by the
 "hard errors by default" principle applied at load time.
 
-**Risk 6 — Reverse substitution collisions**
-*(LOW impact, LOW likelihood).*
-
-§4.5's reverse-substitution step on `copy_back` could misbehave if
-the same absolute path string appears in both placeholder form and
-literal form inside a plan file.
+**Risk 6 — Reverse substitution collisions.** *(LOW impact, LOW
+likelihood)*. Reverse substitution on `copy_back/2` could misbehave
+if the same absolute path string appears in both placeholder form
+and literal form inside a `.md` file.
 
 **Mitigation:** substitute only in `.md` files; substitute only the
-specific well-known placeholder tokens; log every reverse substitution
-to the forensic log for user audit. Revisit if real plans hit the
-collision.
+specific well-known placeholder tokens; log every reverse
+substitution to the forensic log.
+
+**Risk 7 — `description` field drift.** *(LOW impact, LOW
+likelihood)*. Plans created before the description cap was enforced
+may have descriptions that fail the new load-time check, blocking
+the daemon from starting.
+
+**Mitigation:** sub-G's migration script writes a placeholder-free
+≤120-character description for every existing plan during the
+migration run, derived from the plan's backlog top line or the
+design doc title.
 
 ### 5.5 Open implementation questions
 
-Not blocking the brainstorm — decisions to be made during
-implementation, with safe defaults noted.
-
-1. **Exact YAML frontmatter field names for `plan-state.md`** beyond
-   the ones listed in §2.2.2. Draft during implementation; refine
-   with user review once Dataview queries are being written against
-   it.
-2. **Staging allowlist for project-level files.** Default: `README.md`
-   plus files under `<project>/docs/` explicitly referenced by the
-   phase prompt (resolved at prompt-parse time). Refine during
-   implementation if real prompts reveal this is too narrow.
-3. **Keybindings for the Ratatui TUI.** Draft: arrow keys primary,
-   vim bindings as alternates, configurable later.
-4. **IPC protocol message shapes for `IpcDriver`.** Specified during
-   implementation, not at spec time. Safe default: JSON lines, one
-   message per line, every message carries an explicit
-   `protocol-version: 1` field. Concrete message shapes are committed
-   as example fixtures in `tests/fixtures/ipc-protocol/` as they are
-   introduced. The spec-time commitment is the boundary discipline
-   (§4.3), not the wire format.
-5. **Error diagnostic formatting** for TUI display vs. stderr startup
-   messages. Draft during implementation.
-6. **`phase-prompt.readonly.md` content for manual mode.** Draft: raw
-   prompt text; extend with current-plan-state summary and recent
-   session-log entries if the bare prompt proves too sparse.
-7. **Relative vs. absolute symlink targets** in the vault. Design
-   says relative; implementation should verify relative paths work
-   correctly with Obsidian across vault moves.
+1. **Exact YAML frontmatter field layering in `plan-state.md`** —
+   B's struct covers the required fields, but sub-F may add more
+   (e.g., `attached-consumers: int` for telemetry) and sub-E may add
+   more (e.g., `ingestion-window-closes-at: DateTime`). Coordinate
+   during implementation.
+2. **Staging allowlist for project-level files.** Safe default:
+   `README.md` plus files under `<project>/docs/` explicitly
+   referenced by the phase prompt. Refine if real prompts reveal
+   the default is too narrow.
+3. **`phase-prompt.readonly.md` content for manual mode.** Draft:
+   raw composed prompt text. Extend with current-plan-state summary
+   and recent session-log entries if the bare prompt proves too
+   sparse in practice.
+4. **Sentinel text customisation.** V1 uses the upstream shared
+   phase files' `READY FOR THE NEXT PHASE` literal. V2 may allow
+   per-phase or per-plan sentinel customisation via daemon config.
+5. **Compact phase executor details.** The compact phase reads
+   `memory.md` and rewrites it losslessly. The compact phase prompt
+   (`phases/compact.md` upstream) defines the contract. B's role
+   is to stage the phase and invoke the executor — the rewrite
+   logic is the LLM's.
+6. **Error diagnostic formatting** for typed event display. Draft
+   during implementation once sub-M's struct surface stabilises.
+7. **`yaml_elixir` vs `fast_yaml` vs hand-rolled parser.** Pick
+   during implementation; `yaml_elixir` is the default choice
+   unless load-time profiling reveals it as a bottleneck.
 
 ---
 
@@ -1772,328 +1721,576 @@ recorded in each sibling's `memory.md` when their brainstorms run.
 
 ### On sub-project A — global knowledge store location
 
-- **Dev-root layout includes a dedicated `Mnemosyne-vault/`** (or
-  whatever A chooses to name it). The vault is Mnemosyne-owned and
-  distinct from any project repo. It hosts Tier 2 knowledge natively
-  and runtime state (staging, interrupts, ingestion events) natively;
-  it accesses plan files and Tier 1 per-project knowledge via
-  per-project symlinks into `<project>/mnemosyne/`.
-- **Per-project Mnemosyne role directory is `<project>/mnemosyne/`**
-  (lowercase, visible) with `plans/` and `knowledge/` subdirectories.
-  This replaces the legacy v0.1.0 `<project>/LLM_STATE/` (plans only)
-  and `<project>/knowledge/` (Tier 1 only) split. B proposes this
-  naming; A confirms or revises during its own brainstorm.
-- **Sub-project A decides:** exact name of the vault directory,
-  whether any consolidation under a single Mnemosyne-owned dev-root
-  dir is preferred over separate locations for knowledge and runtime,
-  whether the vault is a git repo (B assumes yes), the default
-  location (B tentatively proposes `<dev-root>/Mnemosyne-vault/`),
-  and the config mechanism for overriding it. A may revise the
-  per-project directory name if a better one emerges from its own
-  naming analysis — B's abstractions are layout-agnostic and accept
-  whatever A chooses.
-- **B assumes:** Tier 1 and Tier 2 roots are independently
-  addressable and exposed as config at Mnemosyne startup.
-- **Obsidian commitment:** A's knowledge store format should be
-  Obsidian-native (markdown + YAML frontmatter + wikilinks +
-  Dataview-friendly property naming) to maintain a unified vault
-  aesthetic with B's plan files.
+- **Vault root is resolved via A's discovery chain** (`--vault` →
+  `MNEMOSYNE_VAULT` → config file → hard error). B consumes the
+  resolved path from the daemon startup context.
+- **`verify_vault` is called by the daemon at startup.** B does not
+  re-verify; B trusts A's guarantee that the vault is well-formed.
+- **Tier 1 per-project knowledge lives at
+  `<project>/mnemosyne/knowledge/`** (sibling of `project-root/`,
+  not inside it). This preserves B's descent invariant.
+- **Obsidian-native format commitment.** A's knowledge store format
+  should be Obsidian-native to maintain a unified vault aesthetic
+  with B's plan files.
 
-### On sub-project C — harness adapter layer
+### On sub-project C — harness adapter layer (rewritten Session 11)
 
-- **`HarnessAdapter` trait shape** as specified in §4.1. B consumes
-  this by name; C fills in the implementations.
-- **Cold-spawn latency budget:** < 3 seconds per session. Warm-pool
-  reuse is C's implementation strategy if cold-spawn proves painful.
-- **Tool profile enforcement at the adapter level**, not via prompt
-  discipline. `ToolProfile::IngestionMinimal` and
-  `ToolProfile::ResearchBroad` are v1 minimum set. Adapters reject
-  disallowed tool invocations at runtime.
-- **`FixtureReplayAdapter` as a first-class variant** of
-  `HarnessKind`, used by B's end-to-end tests and by sub-project E's
-  pipeline tests.
+- **`@behaviour Mnemosyne.HarnessAdapter` shape** as specified in
+  sub-C's §3 (Elixir behaviour definition).
+- **Session GenServer contract**: `attach_consumer/2`,
+  `send_user_message/2`, `kill/2`, `await_exit/1`. B consumes the
+  session via these calls.
+- **Typed events** (`%Mnemosyne.Event.HarnessOutput{}`,
+  `%SessionLifecycle{}`, `%SessionExitStatus{}`, `%HarnessError{}`)
+  are delivered to attached consumers as `{:event, struct}` messages
+  in the consumer's mailbox.
+- **Cold-spawn latency gate:** C-1 at p95 < 5 s, N≥10 cycles. Warm-pool
+  reuse is C's implementation strategy if needed.
+- **Tool profile enforcement at the adapter level** via spawn-time
+  CLI flags plus defence-in-depth stream-side rejection. V1 profiles:
+  `:ingestion_minimal`, `:research_broad`.
+- **`FixtureReplay` adapter** as a first-class variant implementing
+  the same behaviour. Used by B's Layer 2 integration tests and by
+  sub-E's pipeline tests.
+- **cmux-noise mitigation:** `--setting-sources project,local
+  --no-session-persistence` mandatory on every daemon-spawned
+  Claude Code session.
 - **Working directory on spawn is the staging root**, not the plan
   dir or project root.
-- **Session termination is non-blocking and idempotent.** `terminate()`
-  returns immediately; actual termination completes asynchronously
-  and is observed via `next_chunk()` returning `Ok(None)`.
-- **No callback channel from harness to Mnemosyne.** Per the "no
-  slash commands in the harness" decision.
+- **Termination is non-blocking and observed via
+  `%SessionLifecycle{transition: {:exited, _}}`**.
+- **No harness-side control channel.** Tool-call boundary for
+  in-session Queries (sub-C §4.5) is an *injection* mechanism, not
+  a control channel: the adapter injects Mnemosyne-owned tools
+  (`ask_expert`, `dispatch_to_plan`, `read_vault_catalog`) into the
+  session and intercepts their invocations for routing through F.
+  This is not a slash-command surface.
 
-### On sub-project D — multi-instance concurrency
+### On sub-project D — daemon coordination (collapsed scope)
 
-- **Advisory lock primitive** exposed as `PlanLockGuard` with
-  `acquire(path)` returning a guard dropped on scope exit.
-- **Lock location:** `<vault>/runtime/locks/<plan-id>.lock`. Per-plan
-  scope, vault-scoped.
-- **Whole-store lock on the Tier 2 knowledge store** (as already
-  required by sub-project E). Acquired by E's Stage 5.
-- **Lock acquisition failure is a hard error** with a clear diagnostic
-  naming the holding PID.
-- **Cleanup of abandoned locks:** D's decision whether stale lock
-  files left by crashed Mnemosyne instances are auto-cleaned on next
-  startup (with a confirmation prompt?) or require manual
-  intervention. Not B's scope.
+- **Daemon-wide singleton lock** at `<vault>/runtime/daemon.lock`
+  via flock. B consumes this as a startup precondition; B does not
+  acquire it directly.
+- **External-tool coordination** for Obsidian or user-editor writes
+  concurrent with daemon writes — D's brainstorm produces a
+  detection + rollback + user-facing reconcile strategy. B's
+  `copy_back/2` is the integration point for whatever D decides.
+- **Vault git concurrency** for periodic daemon commits — D's
+  brainstorm produces the strategy. B does not commit to vault git
+  directly (that is F and E's territory).
+- **Per-plan advisory locks are NOT required in v1.** OTP mailbox
+  serialization at the PlanActor level replaces them. F's daemon
+  is singleton, so inter-process per-plan contention is not a v1
+  concern.
 
-### On sub-project E — post-session ingestion (already complete)
+### On sub-project E — post-session knowledge ingestion
 
-- **No structural changes to E's design.** Path resolution for
-  ingestion events becomes `<vault>/runtime/ingestion-events/` under
-  the new layout; E's existing path assumption
-  `{{mnemosyne_data}}/ingestion-log/` resolves to this.
-- **E's `ReflectExitHook` trait** is implemented on E's side per
-  §4.2 of this document. B calls the hook non-blockingly and does
-  not observe its outcomes.
-- **E's ingestion events are forwarded through the shared `PhaseEvent`
-  channel** as `IngestionEvent` variants, so the TUI notification
-  feed displays them alongside phase events.
+- **`Mnemosyne.ReflectExitHook` behaviour** (§4.2) implemented on
+  E's side. B calls the hook non-blockingly and does not observe
+  its outcomes.
+- **Stage 5 becomes dispatch-to-experts** (F amendment to E pending).
+  E sends candidate knowledge entries as Query messages to relevant
+  experts; each expert reviews the candidate in its own fresh
+  context, decides absorb/reject/cross-link. B is unaffected by
+  this change — B only cares about the hook firing.
+- **Path resolution for ingestion events:** `<vault>/runtime/ingestion-events/`
+  under the new layout.
+- **E's ingestion events are emitted through sub-M's telemetry
+  boundary** as `Mnemosyne.Event.Ingestion.*` variants. B observes
+  them only through sub-M, not through a direct subscription.
 
-### On sub-project F — plan hierarchy
+### On sub-project F — plan hierarchy + actor model + routing
 
-- **Plan hierarchy is contained within single project repos** in v1.
-  A plan's parent plan must be in the same project repo as the child.
-  Cross-project plan hierarchies are out of scope.
-- **The `plan-state.md` marker is the B-imposed invariant** F must
-  respect: a directory is a plan if and only if it contains
-  `plan-state.md`. F may decide the semantics of hierarchy (reserved
-  root plan locations, parent/child tracking, promotion semantics,
-  whether intermediate organisational directories are allowed) but
-  cannot change the marker rule.
-- **Plan discovery walks use the canonical plan directory inside
-  project repos**, not vault-symlinked paths. The vault is a view,
-  not the source of truth.
-- **`StagingDirectory::render` refuses to descend into subdirectories
-  containing `plan-state.md`** — this is non-negotiable because it
-  prevents cross-plan content leakage. F's hierarchy model must be
-  compatible with this rule; a hierarchy model that requires a parent
-  plan's staging to include child plan content is incompatible with B
-  and must be redesigned.
-- **If F decides cross-project hierarchies are necessary**, it must
-  re-examine plan state propagation across git repo boundaries and
-  surface the requirements to B.
+- **`PhaseRunner` runs inside a PlanActor GenServer.** F owns the
+  PlanActor shape, the `handle_info/2` dispatch, and the message
+  set described in §4.5. B is invoked from F's `handle_info/2`.
+- **`plan-state.md` schema pruning.** `plan-id`, `host-project`,
+  `dev-root` are removed (derivable from path). `description` is
+  added (required, ≤120 chars, non-placeholder, hard-capped).
+  `mnemosyne-pid` renamed to `daemon-pid`.
+- **`{{RELATED_PLANS}}` → `{{VAULT_CATALOG}}`.** The placeholder
+  renames; the content changes to F's vault catalog
+  (`<vault>/plan-catalog.md`). `related-plans.md` is **deleted
+  entirely** — it has no successor.
+- **`DispatchProcessor` and `QueryProcessor` are F-owned modules**
+  invoked by B's runner as phase-exit hooks on non-compact phases.
+- **Path-based qualified IDs.** B does not cache the qualified ID;
+  F's helper functions compute it at read time from `plan_dir`
+  relative to `<vault>/projects/`.
+- **Descent invariant is non-negotiable.** `StagingDirectory.render/4`
+  refuses to descend into subdirectories containing `plan-state.md`.
+  F's hierarchy model must be compatible with this rule.
+- **`project-root` is reserved.** F owns the reserved-name
+  invariant. B treats `project-root/` as a plan like any other.
 
 ### On sub-project G — migration
 
-- **Create the vault on first Mnemosyne run** if it doesn't exist,
-  including directory structure, `.git`, `.gitignore`, and initial
-  `.obsidian/` stub.
-- **Per-project directory rename and fold**: migrate
-  `<project>/LLM_STATE/` to `<project>/mnemosyne/plans/` and
-  `<project>/knowledge/` to `<project>/mnemosyne/knowledge/`.
-  Preserve existing nested plan structure (if any) inside the new
-  `plans/` subdirectory. For v1 dogfood, the orchestrator seed plan
-  and sub-project E's sibling plan both need this rename applied.
-- **One-shot migration from `phase.md` to `plan-state.md`** for
-  existing plans. Read legacy `phase.md`, write new `plan-state.md`
-  with inferred `plan-id`, `host-project`, `dev-root`, `current-phase`
-  (from the legacy single-word file), and `schema-version: 1`.
-  Delete the legacy `phase.md`.
-- **Migrate `~/.mnemosyne/` → `<vault>/knowledge/`** for existing
-  v0.1.0 users. Copy contents, preserve `~/.mnemosyne-legacy/` as a
-  backup, do not auto-delete.
-- **Initial symlink rescan** on first vault run.
-- **Migration ordering**: per-project directory rename must happen
-  before `plan-state.md` creation (so the new file lands in the new
-  location) and before vault symlink rescan (so the vault symlinks
-  target the renamed directories).
-- **Rollback story:** document how a user can revert to v0.1.0 +
-  `run-backlog-plan.sh` if v1 proves unusable. B's design is
-  non-destructive on the user's project repos in the sense that
-  migration is a rename+move operation, not a delete; a `git revert`
-  on the migration commit restores the v0.1.0 layout. G's brainstorm
-  details the exact rollback steps.
+- **Create the vault on first daemon run** if it doesn't exist
+  (A's scope, but G orchestrates the startup step).
+- **Rename `<project>/LLM_STATE/` → `<project>/mnemosyne/project-root/`**
+  (the earlier `mnemosyne/plans/` container is collapsed by F). For
+  v1 dogfood, the orchestrator seed plan and sub-E's sibling plan
+  both need this rename applied.
+- **`phase.md` → `plan-state.md`** one-shot migration. Read legacy
+  `phase.md`, write new `plan-state.md` with inferred
+  `current-phase` (from the legacy single-word file), `description`
+  (from backlog top line or design-doc title, truncated to 120
+  chars), `schema-version: 1`, empty `last-exit`.
+- **`related-plans.md` deletion.** G deletes any existing
+  `related-plans.md` files during migration; the successor is F's
+  vault catalog, which has no per-plan counterpart.
+- **Rust CLI retirement.** The previous v0.1.0 Rust CLI is retired
+  entirely; daemon + Rust TUI split is the new shape. G's scope
+  covers the retirement.
+- **Session 8 carry-forward items** still apply: `pre-work.sh`
+  invocation point, `prompt-<phase>.md` override pattern,
+  `compact-baseline` file semantics.
+- **Migration ordering**: directory renames before `plan-state.md`
+  creation before vault symlink rescan.
+- **Rollback story**: B's design is non-destructive on user project
+  repos in the sense that migration is a rename+move operation,
+  not a delete; `git revert` on the migration commit restores the
+  v0.1.0 layout.
 
 ### On sub-project H — skills fold-in
 
-- **Every legacy Claude Code skill** (`/begin-work`, `/reflect`,
-  `/setup-knowledge`, `/create-plan`, `/curate-global`,
-  `/promote-global`, `/explore-knowledge`) that is preserved in v1
-  becomes a Mnemosyne TUI action (a `TuiAction` variant) or a phase
-  prompt, not a harness slash command. No Mnemosyne-provided plugin
-  ships with v1.
+- **Every legacy Claude Code skill** that is preserved in v1 becomes
+  an **attached-client action** (a message from the TUI or Obsidian
+  plugin to the PlanActor over the socket), not a harness slash
+  command. No Mnemosyne-provided plugin ships with v1.
 - **Human-driven counterparts** for every skill preserved per the
   co-equal-actors principle. Where an LLM-mode variant requires
   reasoning, the human-mode variant opens the relevant file(s) in
-  `$EDITOR` or provides a direct CRUD action via the TUI (or the
-  Obsidian vault directly, per the "Obsidian is the committed
-  explorer" decision).
-- **Sub-project H's design must fold cleanly into sub-project J's
-  territory**: human-mode phase affordances. B's `PhaseExecutor`
-  trait with `ManualEditorExecutor` is the mechanism; H specifies the
-  skill-to-executor mappings.
+  `$EDITOR` or provides a direct CRUD action via the TUI or
+  Obsidian vault.
+- **Sub-H's mapping must go through the client-socket boundary**,
+  not through harness slash commands or prompt tricks.
 
-### On sub-project K (new) — Obsidian plugin client
+### On sub-project I — Obsidian coverage (re-scoped)
 
-- **New backlog candidate** surfaced during this brainstorm. V1.5+
-  scope. Builds on B's IPC boundary hardening (§4.3) and on the
-  terminal plugin evaluation from sub-project L.
-- **Speaks the IPC protocol** defined during B's implementation. Does
-  not require changes to the Rust core beyond additive `PhaseEvent`
-  and `TuiAction` variants.
-- **Covers:** Mnemosyne command palette inside Obsidian, phase-state
-  panel querying the IPC, terminal-plugin integration for hosting
-  harness sessions visibly inside Obsidian, streaming output rendered
-  to an Obsidian view, Dataview integration for multi-plan
-  dashboards that cross-reference live phase state with historical
-  plan data.
+- **Obsidian is a concrete daemon client.** I documents which
+  Obsidian features cover which data surfaces (Tier 1/2 knowledge,
+  plan state, sessions, ingestion provenance, **vault catalog**,
+  **routing module**, daemon event stream).
+- **Vault catalog and routing module are user-visible surfaces.**
+  `<vault>/plan-catalog.md` is the "what's in my vault" dashboard;
+  `<vault>/routing.ex` is a syntax-highlighted Elixir file.
 
-### On sub-project L (new) — Obsidian terminal plugin spike
+### On sub-project M — observability framework
 
-- **New backlog candidate.** Prerequisite for K. Small investigation
-  task.
-- **Scope:** evaluate existing Obsidian terminal plugins
-  (obsidian-terminal, obsidian-execute-code, others) for PTY control,
-  streamed output capture, clean termination. If existing plugins
-  don't support enough, K forks or builds a Mnemosyne-specific
-  terminal plugin.
+- **Hybrid `:telemetry` + typed struct events** is the project-wide
+  pattern. B emits `Mnemosyne.Event.*` structs; M provides the
+  transport and the sealed struct set.
+- **B's contributed structs** are listed in §4.4 above (the
+  `%PhaseLifecycle{}` variants). M's design doc enumerates the
+  full sealed set; B must be in it.
+- **Parallel-emit + mechanical verification** is the adoption path
+  for tactical seeds. B has no tactical seed to migrate (C's
+  `SpawnLatencyReport` is C's; B only consumes it).
+
+### On sub-project N — domain experts
+
+- **ExpertActor is a Query target for E's Stage 5** (post-F
+  amendment). N owns ExpertActor internals; B has no direct
+  contract with N.
+
+### On sub-projects K, L, O, P
+
+- **Sub-K (Obsidian plugin client, v1.5+)** speaks F's NDJSON client
+  protocol. B's PlanActor message contract is the extension point.
+- **Sub-L (Obsidian terminal plugin spike)** has no direct coupling
+  to B.
+- **Sub-O (mixture of models, v1.5+)** may add per-actor model
+  selection. B's executor builder reads the model from daemon config
+  via F's PlanActor if needed; v1 ships a single adapter.
+- **Sub-P (team mode, v2+)** has no direct coupling to B beyond
+  the qualified-ID syntax (`<peer>@<qualified-id>`), which B never
+  parses (F's helpers handle it).
 
 ---
 
 ## Appendix A — Decision Trail
 
 Every major decision in B's design was made collaboratively during
-the 2026-04-12 brainstorm session and approved at a specific point.
-Listed in approximate order of resolution.
+the 2026-04-12 brainstorm session and the subsequent amendment
+sessions. Listed in approximate order of resolution. Q1–Q17 are from
+the original brainstorm (some corrected by later sessions); Q18–Q20
+record the three upstream shifts that triggered the Session-12
+inline rewrite.
 
-1. **Placeholder substitution strategy: pre-render to staging
-   directory** (Option A of Q1). Selected after comparing pre-render,
-   virtual filesystem (FUSE), MCP custom Read tool, and the
-   "never use placeholders at all" option. Pre-render wins on build
-   surface, harness-independence, testability, and the
-   "reverse-projection is a feature, not a cost" property (the
-   copy-back step is a natural interception point).
+### Q1 — Placeholder substitution strategy
 
-2. **Phase state richness: replace `phase.md` with `plan-state.md`
-   (markdown with YAML frontmatter).** Initially scoped as
-   `plan-state.toml` during the richness discussion, then revised
-   to markdown-with-frontmatter after the Obsidian lock-in made
-   Obsidian-native format mandatory. Selected over flat-and-
-   in-memory and SQLite-backed options. The richer structured file
-   is required because sub-project E's `ingestion-fired` flag needs
-   to survive Mnemosyne crashes; YAML frontmatter in markdown is
-   chosen over TOML because it keeps `plan-state.md` format-
-   consistent with the rest of the vault's wiki aesthetic and is
-   queryable via Obsidian's Dataview plugin without a separate
-   TOML parser.
+Selected: **pre-render to staging directory** (Option A). Compared
+against pre-render, virtual filesystem (FUSE), MCP custom Read tool,
+and "never use placeholders at all." Pre-render wins on build surface,
+harness-independence, testability, and the "reverse-projection is a
+feature, not a cost" property — the copy-back step is a natural
+interception point.
 
-3. **Vendored `LLM_CONTEXT/` files live at `Mnemosyne/prompts/`**
-   (not `Mnemosyne/docs/`), embedded into the binary via
-   `include_str!`, materialised into staging dirs via a new
-   `{{PROMPTS}}` placeholder. Corrected from initial "docs" framing
-   after user pointed out the files are prompts, not documentation.
+**Session 12 (F-pivot) addition:** the placeholder set grows from
+four to five, with `{{RELATED_PLANS}}` renamed to `{{VAULT_CATALOG}}`
+and pointed at F's vault catalog file. Substitution algorithm
+unchanged; reverse substitution still runs on `.md` files only.
 
-4. **Human/LLM entry relationship: pluggable `PhaseExecutor` trait**
-   (Option C of Q3). Selected after comparing unified-command-with-
-   mode-flag, distinct-commands-per-kind, and pluggable-executor-trait.
-   The executor trait is what makes co-equal-actors a type-level
-   guarantee; it also collapses sub-project J into B as "implement
-   one executor."
+### Q2 — Phase state richness
 
-5. **Migration of existing plans and the runtime state layout**
-   owned by sub-project G. Cross-sub-project requirement, not a B
-   decision.
+Selected: **replace `phase.md` with `plan-state.md` (markdown with
+YAML frontmatter)**. Initially scoped as `plan-state.toml` during
+the richness discussion, then revised to markdown-with-frontmatter
+after the Obsidian lock-in made Obsidian-native format mandatory.
+Rejected flat-and-in-memory and SQLite-backed options.
 
-6. **Pause/takeover: hard cancel + takeover prompt** (Option B of
-   Q4), extended with a third `retry-llm` option. Selected after
-   comparing hard-cancel-only, hard-cancel-with-takeover-prompt, and
-   suspend-resume (ruled out as not viable). The takeover prompt
-   is a TUI-level interaction, not a shell prompt.
+**Session 12 (F-pivot) schema pruning:** remove `plan-id`,
+`host-project`, `dev-root` (all derivable from filesystem path per
+F's F-4 decision). Add `description:` (required, ≤120 characters,
+non-placeholder, hard-capped). Rename `mnemosyne-pid` →
+`daemon-pid` to reflect the BEAM daemon runtime.
 
-7. **Obsidian is the committed maintenance/explorer UI for Mnemosyne.**
-   Corrected from "Interpretation A: generic integration stance"
-   after user committed to Obsidian explicitly. Every file format,
-   directory layout, and cross-reference decision is made with
-   Obsidian specifically as the consuming tool. Special Obsidian
-   tooling (sub-project K) can enhance the experience later, but v1
-   must ship a maximally Obsidian-native baseline.
+**Session 12 (LLM_CONTEXT overhaul) addition:** the `current_phase`
+enum grows from three phases to four (`work | reflect | compact |
+triage`). A sticky `compact-baseline: integer` field is added to
+track the `wc -w memory.md` checkpoint from the most recent
+successful compact.
 
-8. **Long-running process model (not CLI-per-phase).** Mnemosyne
-   starts once, holds the plan for the session, exits at user quit.
-   TUI drives phase advancement. No `mnemosyne phase run <phase>`
-   subcommand structure.
+### Q3 — Where vendored LLM_CONTEXT files live
 
-9. **UI: Ratatui TUI from v1** (Option B of Q5). Selected after
-   comparing stdin/stdout prompt loop, ratatui TUI, and headless
-   daemon + CLI client. Subsequently reinforced by the IDE
-   integration and multi-Mnemosyne arguments in favour of a terminal
-   UI.
+Selected: **`Mnemosyne/prompts/`** (not `Mnemosyne/docs/`), embedded
+into the binary, materialised into staging dirs via a new
+`{{PROMPTS}}` placeholder. Corrected from the initial "docs" framing
+after user pointed out the files are prompts, not documentation.
 
-10. **No slash commands inside the harness.** Cross-cutting
-    architectural decision surfaced during the brainstorm. The
-    harness is a pure worker with no user-facing command surface.
-    All user commands flow through Mnemosyne's TUI. Retroactively
-    affects sub-project H's scope (legacy skills become TUI
-    actions, not harness commands) and sub-project C (no callback
-    channel from harness to Mnemosyne).
+**Session 12 (LLM_CONTEXT overhaul) vendor list refresh:** the
+vendor list becomes `phases/{work,reflect,compact,triage}.md` +
+`fixed-memory/{coding-style,coding-style-rust,memory-style}.md` +
+`create-plan.md`. The pre-overhaul filenames `backlog-plan.md` and
+`create-a-multi-session-plan.md` are deleted upstream and must
+**not** appear in `Mnemosyne.Prompts` or in the vendored tree.
 
-11. **Obsidian locked in as the data format target.** Wiki of
-    markdown files with YAML frontmatter, stored in an Obsidian
-    vault. This subsumes sub-project A's format question for
-    Tier 2 knowledge and makes B's plan files format-consistent
-    with the rest of the vault.
+**Session 12 (BEAM pivot) rehousing:** the `include_str!` embedding
+is re-cast to Elixir's `@external_resource` + `File.read!/1`
+compile-time read pattern. `materialise_into/1` becomes a module
+function preserving the `phases/` and `fixed-memory/` subdirectory
+layout.
 
-12. **Dev-root layout: dedicated `Mnemosyne-vault/` with symlinked
-    plans + native knowledge + native runtime.** Plans stay in
-    project repos; vault references them via symlinks. Corrected
-    from an earlier "Obsidian vault = dev root" proposal after user
-    pointed out that made Obsidian index every source file, `.git`
-    dir, and build artifact across every project. The dedicated
-    vault with symlinks keeps Obsidian focused and project repos
-    sovereign.
+### Q4 — Human/LLM entry relationship
 
-13. **Hard errors by default.** Cross-cutting architectural decision.
-    Soft fallbacks require explicit written rationale. Applied
-    throughout B: illegal phase transitions, lock contention,
-    schema version mismatches, copy-back rejections, symlink cycles,
-    and many other paths all fail hard with diagnostics.
+Selected: **pluggable `PhaseExecutor` trait** (Option C, re-cast as
+a `@behaviour` in Session 12). Compared against
+unified-command-with-mode-flag, distinct-commands-per-kind, and
+pluggable-executor-trait. The executor behaviour is what makes
+co-equal-actors a type-level guarantee; it also collapses
+sub-project J into B as "implement one executor."
 
-14. **Path 1 (stage it): ratatui v1, Obsidian plugin v2.** Selected
-    after comparing Path 1 (stage it) and Path 2 (flip v1 to
-    Obsidian-primary). Three reasons: V1's acceptance test is
-    dogfooding the orchestrator plan, which Path 2 delays significantly;
-    the IPC hardening is a near-free upgrade that unlocks both
-    paths; the workflow-in-Obsidian risk deserves a spike before a
-    full commitment. Reinforced by the user's points about IDE
-    integration (ratatui runs inside any embedded terminal) and
-    multi-Mnemosyne architecture (multiple ratatui instances in
-    terminal tabs is zero-friction, multiple Obsidian windows
-    fighting over vault access is painful).
+### Q5 — Migration of existing plans and the runtime state layout
 
-15. **Pre-implementation blocker: Obsidian + symlinks validation
-    spike on macOS and Linux.** Not an abstract risk entry — a
-    concrete first task in sub-B's implementation backlog, using
-    GUIVisionVMDriver's golden images to run reproducible
-    validation across both target platforms. Failure mode has a
-    documented fallback (hard-copy two-way sync) that keeps B's
-    abstractions valid either way.
+Owned by sub-project G. Cross-sub-project requirement, not a B
+decision. F amendment (Session 12) expanded G's scope to include
+the Rust CLI retirement and the `related-plans.md` deletion.
 
-16. **Fold `<project>/knowledge/` under the same top-level directory
-    as plans, and rename that directory to `<project>/mnemosyne/`
-    (lowercase).** Previously two sibling top-level directories in
-    project repos: `LLM_STATE/` for plans and `knowledge/` for Tier 1
-    knowledge. Consolidated into `<project>/mnemosyne/` with `plans/`
-    and `knowledge/` subdirectories. Chosen over `llm-state/`,
-    `.mnemosyne/`, and keeping the original two-directory split. The
-    lowercase `mnemosyne/` name connects per-project directories to
-    the Mnemosyne tool explicitly (`llm-state/` carried no Mnemosyne
-    connotation); the lowercase vs. uppercase distinction
-    disambiguates from the `Mnemosyne/` project repo name and from
-    `Mnemosyne-vault/` at the dev-root level. Collapses the vault
-    symlink tree from two subtrees (`plans/` + `project-knowledge/`)
-    to one (`projects/`), with one symlink per project targeting
-    `<project>/mnemosyne/` and covering both plans and knowledge
-    through that single link.
+### Q6 — Pause/takeover
 
-17. **Plan hierarchy accommodated via `plan-state.md` marker-based
-    discovery plus the `StagingDirectory::render` descent rule.**
-    A directory is a plan if and only if it contains `plan-state.md`.
-    Plans can nest arbitrarily inside `<project>/mnemosyne/plans/`.
-    `PhaseRunner` holds exactly one `PlanContext` at a time;
-    `StagingDirectory::render` refuses to descend into subdirectories
-    containing `plan-state.md`, so staging a parent plan never
-    includes child plan content (and vice versa). This keeps "one
-    plan per Mnemosyne process" intact against a hierarchical
-    layout. Exact hierarchy semantics (reserved root plan locations,
-    parent/child tracking, promotion upward) are deferred to
-    sub-project F's brainstorm; B only provides the marker rule and
-    the descent invariant.
+Selected: **hard cancel + takeover prompt** (Option B), extended with
+a third `retry-llm` option. Compared against hard-cancel-only,
+hard-cancel-with-takeover-prompt, and suspend-resume (ruled out as
+not viable). The takeover prompt is a client-interaction-level
+concept, not a shell prompt.
+
+**Session 12 re-cast:** the takeover prompt surfaces as a typed
+`%PhaseLifecycle{kind: :takeover_offered, ...}` event forwarded to
+attached consumers. The user's response returns through the PlanActor
+as `{:takeover, :manual | :retry_llm | :dismiss}`.
+
+### Q7 — Obsidian as committed maintenance/explorer UI
+
+Committed during the original brainstorm. Every file format,
+directory layout, and cross-reference decision targets Obsidian
+specifically. Special Obsidian tooling (sub-K) can enhance the
+experience later, but v1 ships a maximally Obsidian-native baseline.
+
+### Q8 — Long-running process model
+
+Selected: **long-running Mnemosyne process** (not CLI-per-phase).
+The original framing was "Mnemosyne starts once, holds the plan for
+the session, exits at user quit."
+
+**Session 12 (sub-F pivot) re-cast:** the "long-running process" is
+now the **persistent BEAM daemon**, not a per-plan main loop. The
+phase cycle runs inside a PlanActor GenServer within the daemon; the
+daemon outlives individual plan sessions.
+
+### Q9 — UI: ratatui TUI from v1
+
+Originally Option B of the brainstorm Q5. Selected in Session 4 as
+"Path 1: ratatui v1, Obsidian plugin v2." The TUI would be the
+process main loop and hold the PlanContext.
+
+**Session 12 (sub-F pivot) re-cast:** the TUI is no longer the
+process main loop. It is a separate Rust client binary that connects
+to the daemon over `<vault>/runtime/daemon.sock` speaking NDJSON. B
+contributes zero rendering code; B's responsibility ends at the
+PlanActor's message contract. The TUI is still Rust + `ratatui`, but
+it is not a B-owned artefact — it is sub-F's deliverable.
+
+### Q10 — No slash commands inside the harness
+
+Cross-cutting architectural decision surfaced during the brainstorm.
+The harness is a pure worker with no user-facing command surface.
+All user commands flow through the client socket. Retroactively
+affects sub-project H (legacy skills become attached-client actions)
+and sub-project C (no *control* callback channel; observation is
+explicitly allowed and mandatory).
+
+**Post-brainstorm user clarification (recorded against sub-C):** the
+rule forbids *control* flowing from harness to Mnemosyne (slash
+commands, programmatic callbacks, LLM-invoked Mnemosyne actions via
+tool use), **not** *observation* of harness state by Mnemosyne.
+Mnemosyne reading the harness's structured output and reacting on
+its own side is exactly what the bidirectional stream-json design
+enables. B's sentinel matcher (§4.1 Requirement 2) is a concrete
+instance of this clarification.
+
+**Session 11 (sub-C tool-call-boundary addition):** sub-C §4.5 adds
+a *tool-call boundary* that injects Mnemosyne-owned tools
+(`ask_expert`, `dispatch_to_plan`, `read_vault_catalog`) into the
+harness session and intercepts their invocations for routing through
+F. This is an injection mechanism, not a control surface — the
+intercepted tool calls route through F's router, not back into the
+harness's own control flow. The rule is preserved.
+
+### Q11 — Obsidian locked in as the data format target
+
+Wiki of markdown files with YAML frontmatter, stored in an Obsidian
+vault. Subsumes sub-A's format question for Tier 2 knowledge and
+makes B's plan files format-consistent with the rest of the vault.
+
+### Q12 — Dev-root layout: dedicated Mnemosyne vault
+
+Plans stay in project repos; vault references them via symlinks.
+Corrected from an earlier "Obsidian vault = dev root" proposal after
+user pointed out that made Obsidian index every source file, `.git`
+dir, and build artifact across every project. The dedicated vault
+with symlinks keeps Obsidian focused and project repos sovereign.
+
+### Q13 — Hard errors by default
+
+Cross-cutting architectural decision. Soft fallbacks require explicit
+written rationale. Applied throughout B: illegal phase transitions,
+schema version mismatches, copy-back rejections, symlink cycles,
+description overflow, `pre-work.sh` non-zero exit, sentinel matcher
+overflow — all fail hard with forensics preserved.
+
+### Q14 — Path 1: ratatui v1, Obsidian plugin v2
+
+Selected after comparing Path 1 (stage it) and Path 2 (flip v1 to
+Obsidian-primary). The v1 acceptance test is dogfooding the
+orchestrator plan, which Path 2 delays significantly; the IPC
+hardening is a near-free upgrade that unlocks both paths.
+
+**Session 12 (sub-F pivot) re-cast:** Path 1 still stands —
+ratatui-first for v1, Obsidian plugin for v1.5+. The "IPC hardening"
+is now the sub-F client socket protocol (NDJSON over Unix socket),
+which is F's deliverable and not B's.
+
+### Q15 — Pre-implementation blocker: Obsidian + symlinks validation
+
+Concrete first task. **PASSED 6/6 on macOS and Linux** in Session 5
+(2026-04-13). Hard-copy-fallback layout not needed. Canonical
+guivision + OCR evidence pattern established. See §5.2.
+
+### Q16 — Fold `<project>/knowledge/` under `<project>/mnemosyne/`
+
+Consolidated into `<project>/mnemosyne/` with `knowledge/` and
+(originally) `plans/` subdirectories.
+
+**Session 12 (sub-F pivot) collapse:** the `plans/` subdirectory
+collapses into `project-root/` (F's reserved root plan directory).
+`knowledge/` stays as a sibling of `project-root/`, not inside it,
+preserving B's descent invariant. Adoption check becomes
+`<project>/mnemosyne/project-root/plan-state.md` exists.
+
+### Q17 — Plan hierarchy via `plan-state.md` marker
+
+A directory is a plan iff it contains `plan-state.md`. Plans can
+nest arbitrarily. `StagingDirectory.render/4` refuses to descend
+into subdirectories containing `plan-state.md`, so staging a parent
+plan never includes child plan content (and vice versa). Exact
+hierarchy semantics deferred to sub-project F.
+
+**Session 9 (sub-F design complete):** F adopted the marker rule
+and the descent invariant unchanged. F added the reserved-name
+invariant (`project-root` cannot appear elsewhere in the tree) and
+the knowledge-isolation invariant (`<project>/mnemosyne/knowledge/`
+is never a plan).
+
+### Q18 — LLM_CONTEXT 2026-04 overhaul absorption (Session 12)
+
+LLM_CONTEXT's upstream shape shifted after B's 2026-04-12 brainstorm.
+Seven concrete changes landed upstream and had to be absorbed into
+B's design:
+
+1. **Four-phase cycle** (work → reflect → compact → triage), with
+   compact conditional on a wc-word-count trigger. Reflect always
+   writes `compact` as its nominal next phase; the runner decides
+   at compact-entry whether to invoke the executor or transition
+   directly to triage. Compact is strictly lossless; only reflect
+   may prune.
+2. **Phase-file-factored composition**: shared `phases/<phase>.md`
+   + optional per-plan `prompt-<phase>.md` override (additive only,
+   never replacing).
+3. **`fixed-memory/memory-style.md`** read by both reflect and
+   compact. Single source of truth for memory entry rules.
+4. **Optional `pre-work.sh` executable hook** invoked from the
+   project root before every work phase. Non-zero exit aborts the
+   whole cycle.
+5. **`{{VAULT_CATALOG}}` synthesised placeholder** (renamed from
+   `{{RELATED_PLANS}}` by F; content now the vault catalog).
+6. **`related-plans.md` schema** (originally Parents/Children-only)
+   **deleted entirely** by F. Successor is the vault catalog.
+7. **ISO 8601 UTC-with-seconds timestamps** for session-log entries;
+   `latest-session.md` is written by the work phase and appended to
+   `session-log.md` post-hoc.
+
+All seven were absorbed inline during the Session 12 rewrite rather
+than appended as a supersede layer. Sub-G's migration scope covers
+the user-facing rename and the `related-plans.md` deletion.
+
+### Q19 — Sub-F actor model commitment (Session 9 via sub-F brainstorm)
+
+Sub-F committed Mnemosyne to a persistent BEAM daemon with two
+sealed actor types (`PlanActor`, `ExpertActor`) and two sealed
+message types (`Dispatch`, `Query`). The commitment triggered four
+concrete changes to B's design:
+
+1. **`PhaseRunner` runs inside a PlanActor GenServer**, not as a
+   standalone process main loop. Phase transitions arrive as
+   `{:run_phase, _}` messages from attached clients.
+2. **`plan-state.md` schema pruning** (see Q2 addition): remove
+   `plan-id`, `host-project`, `dev-root`; add `description:`; rename
+   `mnemosyne-pid` → `daemon-pid`.
+3. **`{{RELATED_PLANS}}` → `{{VAULT_CATALOG}}`** with content change
+   to F's vault catalog. `related-plans.md` deleted.
+4. **Phase-exit hooks** for `DispatchProcessor` and `QueryProcessor`
+   on work/reflect/triage (not compact). Sub-E's reflect-exit hook
+   unchanged in semantics; now invoked non-blockingly via the
+   PlanActor's task supervisor.
+
+The re-cast was done inline during the Session 12 rewrite.
+
+### Q20 — BEAM pivot and the BEAM PTY spike (Sessions 9–10)
+
+Sub-F committed Mnemosyne to Elixir/OTP on BEAM. The entire Rust
+runtime substrate (traits, `Arc<dyn>`, `tokio`, `ratatui`,
+`include_str!`, `serde_yaml`, `fs2`, `crossbeam-channel`, `nix`)
+had to be re-cast on OTP. B's design intent survived unchanged:
+the phase cycle mechanics, the substitution gap closer, the
+four-phase state machine, the co-equal-executor behaviour, the
+descent invariant, the `ingestion-fired` crash-recovery linchpin,
+the staging preserve-on-interrupt pattern. The *runtime substrate*
+moved wholesale:
+
+| Session 6 (Rust) | Current (BEAM) |
+|---|---|
+| `PhaseRunner` owning its own tokio runtime | `PhaseRunner` pure module called from inside a `PlanActor` GenServer |
+| `Box<dyn PhaseExecutor>` | `@behaviour Mnemosyne.PhaseExecutor` |
+| `Box<dyn HarnessAdapter>` + `Box<dyn HarnessSession>` | Session GenServer consumed via `attach_consumer/2` + `handle_info/2` |
+| `tokio::sync::mpsc` event channel | PlanActor mailbox + `emit_fn` closure |
+| `ratatui` TUI as process main loop | Separate Rust TUI client binary (sub-F) connecting over Unix socket NDJSON |
+| `include_str!` embedding | `@external_resource` + `File.read!/1` at compile time |
+| `serde_yaml` + `gray_matter` | `yaml_elixir` + direct frontmatter split |
+| `fs2::FileExt::lock_exclusive` | Daemon singleton flock (sub-D, collapsed scope) |
+| Process-group termination via `nix::killpg` | Sub-C's `erlexec` with `:kill_group` + two-phase SIGTERM/SIGKILL |
+| `tracing::instrument` | Sub-M's `:telemetry` + typed struct events |
+
+The BEAM PTY spike (Session 10, 2026-04-15; evidence at
+`spikes/beam_pty/`) validated three material findings that B
+depends on:
+
+1. **Pipes-only `erlexec` is the v1 shape.** PTY is not only
+   unnecessary for stream-json, it *actively breaks* the input
+   path when combined with `erlexec`'s `:stdin` option. B's
+   `LlmHarnessExecutor` consumes a session GenServer that wraps
+   pipes-only `erlexec`, not a PTY-backed one.
+2. **Sliding-buffer sentinel matcher is correct.** Window bounded
+   to `sentinel_size - 1` bytes across single-chunk, split, drip,
+   false-prefix, and false-overlap cases. B's sentinel detection
+   depends on this result.
+3. **Two completion signals are orthogonal.** `{"type":"result"}`
+   is the protocol-level "turn over" signal; the phase-prompt
+   sentinel is the task-level "I am done with the work" signal.
+   B's `LlmHarnessExecutor` treats the `{:turn_complete, _}`
+   variant as informational (forwarded to sub-M) and the sentinel
+   match as the end-of-phase trigger.
+
+The re-cast was done inline during the Session 12 rewrite, not as
+a supersede layer. Every Rust idiom that appeared in the Session-6
+brainstorm was translated to its BEAM equivalent (table above), and
+the BEAM PTY spike findings were woven into §2.3.4 and §4.1.
+
+### Post-write user clarifications
+
+Two clarifications from earlier sessions that shaped the current
+design and are worth preserving here:
+
+1. **Disambiguation between control and observation (see Q10).** The
+   "no slash commands" rule forbids control, not observation. B's
+   sentinel matcher and the `%SessionLifecycle{}` consumption are
+   observation, not control.
+2. **Task-level vs protocol-level completion (see Q20 finding 3).**
+   "When the LLM has finished" is a task-level signal detected via
+   a prompt-instructed sentinel, not via the protocol-level
+   `result` event. Sentinel strings are coupled to phase prompts,
+   which is why B owns them. Validated by the BEAM PTY spike.
+
+---
+
+## Appendix B — Dependency footprint (`mix.exs`)
+
+B adds one new hex dep to the daemon on top of sub-F's baseline:
+
+```elixir
+defp deps do
+  [
+    {:yaml_elixir, "~> 2.9"},   # NEW (sub-B) — YAML frontmatter parse/serialise
+    {:jason,       "~> 1.4"},   # pre-existing — used by B for fixture replay JSON
+    {:telemetry,   "~> 1.2"},   # pre-existing — sub-M transport
+    {:erlexec,     "~> 2.2"},   # pre-existing — sub-C harness adapter
+    # ... daemon deps (GenServer/DynamicSupervisor/Process are stdlib OTP)
+  ]
+end
+```
+
+B does **not** add `ratatui`, `tokio`, `fs2`, or any Rust-side
+dependency. The TUI is sub-F's Rust client binary with its own
+`Cargo.toml`; B's contribution there is zero.
+
+`Mnemosyne.Prompts`'s embedding uses only stdlib:
+`@external_resource`, `File.read!/1`, `File.write!/2`, and
+`File.mkdir_p!/1`.
+
+---
+
+## Appendix C — Glossary
+
+| Term | Definition |
+|---|---|
+| **Compact phase** | The third phase in the four-phase cycle. Strictly lossless rewrite of `memory.md`. Conditionally skipped when `wc -w memory.md ≤ compact-baseline + HEADROOM`. |
+| **Compact-baseline** | Sticky integer field in `plan-state.md` tracking `wc -w memory.md` at the end of the most recent successful compact. Used by the runner's compact-trigger check. |
+| **Compact-trigger** | The condition `wc -w memory.md > compact-baseline + HEADROOM` that decides whether to invoke the compact executor or skip directly to triage. HEADROOM is a global constant (v1: 1500 words). |
+| **Copy-back** | `StagingDirectory.copy_back/2` — propagates executor-driven edits from the staging directory back to the canonical plan directory, with reverse substitution on `.md` files. |
+| **Descent invariant** | `StagingDirectory.render/4` refuses to descend into subdirectories containing `plan-state.md`. Keeps "one plan per PlanActor" intact against nested filesystem hierarchy. |
+| **Embedded prompts** | The vendored LLM_CONTEXT content at `Mnemosyne/prompts/` compiled into the daemon beam files via `@external_resource` + `File.read!/1`. Materialised into staging directories via `Mnemosyne.Prompts.materialise_into/1`. |
+| **Executor kind** | `:llm | :human | :fixture_replay` — the `kind()` callback return from a `PhaseExecutor`. The only permissible difference between executor modes at the event level. |
+| **Forensics dir** | `<vault>/runtime/interrupted/<qualified-id>/<phase>-<timestamp>/` — preserved staging directory + partial output log for interrupted or failed phases. |
+| **`ingestion-fired` flag** | Boolean in `plan-state.md` `last-exit.ingestion-fired` that sub-E's Stage 5 flips at the start of Stage 5, enabling exactly-once ingestion firing across daemon crashes. |
+| **`latest-session.md`** | Transient per-plan file written by the LLM (or human) during the work phase, appended to `session-log.md` by the runner after clean work exit, deleted defensively before every new work phase. Never read by any phase. |
+| **`Mnemosyne.PhaseRunner`** | B's core state machine module. 13-step `run_phase/4` flow. Pure Elixir, no process state. Invoked from inside a `PlanActor` GenServer. |
+| **`Mnemosyne.StagingDirectory`** | B's substitution gap closer. Per-phase directory under `<vault>/runtime/staging/<qualified-id>/<phase>-<ts>/` with all five placeholders resolved. |
+| **`PlanActor`** | Sub-F's GenServer that hosts one plan's lifecycle. B's `PhaseRunner` runs inside its `handle_info/2` clauses for `{:run_phase, _}` messages. |
+| **Phase composition** | Shared `phases/<phase>.md` (embedded) + optional per-plan `prompt-<phase>.md` override (additive, never replacing). |
+| **`pre-work.sh`** | Optional executable file at `<plan>/pre-work.sh`. Invoked from the project root before every work phase. Non-zero exit aborts the cycle. Not invoked for reflect, compact, or triage. |
+| **Protocol-level completion** | Sub-C's `%SessionLifecycle{transition: {:turn_complete, _}}` event sourced from Claude Code's `{"type":"result"}` NDJSON line. "The model stopped emitting tokens." Orthogonal to task-level completion. |
+| **Reverse substitution** | `StagingDirectory.copy_back/2`'s rewrite of absolute paths back to placeholder form (`{{PLAN}}`, `{{PROJECT}}`, `{{DEV_ROOT}}`) on `.md` files only. Longest-match-first ordering. `{{PROMPTS}}` and `{{VAULT_CATALOG}}` are forward-only. |
+| **Session log** | `<plan>/session-log.md` — audit trail of past completed cycles, one entry per work-phase exit, with ISO 8601 UTC-with-seconds timestamps. Never read by any LLM phase. |
+| **Sliding-buffer sentinel matcher** | B's task-level completion detector. Runs over every `%HarnessOutput{kind: :stdout}` event with window bounded to `sentinel_size - 1` bytes. Validated by the BEAM PTY spike. |
+| **Task-level completion** | The LLM's own judgment that the assigned work is done, signalled via a prompt-instructed sentinel string matched by B's sentinel matcher. Distinct from protocol-level turn boundary. |
+| **`{{VAULT_CATALOG}}`** | Substitution placeholder whose value is the full content of `<vault>/plan-catalog.md` (sub-F's auto-generated catalog). Replaces the earlier `{{RELATED_PLANS}}` placeholder. Forward-only. |

@@ -68,8 +68,12 @@ sub-E as follows:
   Broadway for pipeline stage composition (replaces the tokio channel wiring).
 - **Stage 5 becomes dispatch-to-experts.** Instead of directly writing to the
   knowledge store, Stage 5 sends candidate entries as Query messages to
-  ExpertActors (sub-N). Experts review in fresh context and absorb, reject,
-  or cross-link. Multi-expert absorption is allowed.
+  ExpertActors (sub-N) via sub-C's §4.5 tool-call boundary. The concrete
+  transport: injected tools (`ask_expert`, `dispatch_to_plan`,
+  `read_vault_catalog`) exposed via MCP-over-Unix-socket (preferred),
+  intercepted by the Session GenServer, routed through
+  `Mnemosyne.Router.handle_tool_call/4`. Experts review in fresh context
+  and absorb, reject, or cross-link. Multi-expert absorption is allowed.
 - **Six invariants preserved.** Rules 1–4 and 6 still apply before dispatch;
   Rule 5 (interactive UI events) still fires graduation + supersession
   prompts. The invariants gate what gets dispatched, not what gets written —
@@ -102,19 +106,32 @@ ship slow. Do not optimise session spawn until measurements justify it.
 
 ## Dependencies on sibling sub-projects
 
-- **Sub-project C (harness adapter)** — required for Stages 3 and 4. Until C
-  lands, use a fixture-replay stub adapter that reads recorded session
-  outputs from JSON files. The fixture-replay capability is a cross-cutting
-  requirement on C that must be honoured in its design. Post-F: C is now
-  Elixir (PTY via `erlexec` or Rust wrapper Port).
+- **Sub-project C (harness adapter)** — required for Stages 3 and 4, and
+  provides the §4.5 tool-call boundary that Stage 5's expert dispatch uses
+  as its concrete transport (injected tools via MCP-over-Unix-socket,
+  intercept flow via `Mnemosyne.Router.handle_tool_call/4`). Until C lands,
+  use a fixture-replay stub adapter that reads recorded session outputs from
+  JSON files. The fixture-replay capability is a cross-cutting requirement
+  on C that must be honoured in its design. Post-F: C is now Elixir
+  (NDJSON-over-stdio via `erlexec`).
 - **Sub-project A (store location)** — required for Stage 5 expert dispatch
   targeting. Until A lands, use a configurable Tier 1 root path defaulting to
   `{{PROJECT}}/mnemosyne/knowledge/` and a Tier 2 root defaulting to
   `<vault>/knowledge/`. Update both when A lands.
 - **Sub-project B (phase cycle)** — provides the reflect-exit hook that
-  triggers ingestion. Until B lands, ingestion is invocable only via the
-  manual entry point (goal #6's human-triggered ingestion), not automatically
-  from a cycle. Post-F: PhaseRunner runs inside PlanActor GenServer.
+  triggers ingestion. Sub-B's design doc (§4.2, rewritten for Elixir in
+  Session 12) now defines the concrete `Mnemosyne.ReflectExitHook` behaviour
+  that E must implement. The callback `on_reflect_exit(context)` receives a
+  context map containing `qualified_id`, `plan_dir`, `vault_runtime_dir`,
+  `session_log_latest_entry`, and an `ingestion_fired_setter` closure. B
+  calls the hook non-blockingly via `Task.Supervisor.start_child/3` under
+  the PlanActor's task supervisor, between persisting `plan-state.md` and
+  running F's phase-exit hooks — only on clean reflect exit and only when
+  `last-exit.ingestion-fired` was `false`. E's Stage 5 calls the
+  `ingestion_fired_setter` closure at the start of Stage 5 to flip the flag.
+  Until B lands, ingestion is invocable only via the manual entry point
+  (goal #6's human-triggered ingestion). Post-F: PhaseRunner runs inside
+  PlanActor GenServer.
 - **Sub-project D (concurrency)** — post-F scope collapsed: OTP mailbox
   serialization replaces advisory file locks. D now covers daemon singleton
   lock + advisory locks for external tools (Obsidian, git).

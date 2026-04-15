@@ -30,7 +30,12 @@ amendment task below makes this explicit.
      via Query messages (F's message type). Candidate entries from Stage 4
      reconciliation are sent as Queries to ExpertActors (sub-N). Experts
      review in fresh context and absorb, reject, or cross-link. Multi-expert
-     absorption is allowed.
+     absorption is allowed. The concrete transport mechanism is sub-C's §4.5
+     tool-call boundary: injected tools (`ask_expert`, `dispatch_to_plan`,
+     `read_vault_catalog`) exposed via MCP-over-Unix-socket (preferred),
+     intercepted by the Session GenServer, and routed through
+     `Mnemosyne.Router.handle_tool_call/4`. Query messages from E's pipeline
+     flow through this boundary to reach ExpertActors.
   2. **Elixir re-cast:** All pipeline stages implemented in Elixir. GenStage
      or Broadway replaces the tokio-channel pipeline composition. Rust type
      definitions become Elixir structs with typespecs. Traits become
@@ -50,6 +55,16 @@ amendment task below makes this explicit.
      sections unchanged; Stage 5 section rewritten; §2 type definitions
      re-cast to Elixir; §5 risks updated (BEAM-specific risks replace
      Rust-specific ones).
+  6. **Implement `Mnemosyne.ReflectExitHook` callback.** Sub-B's §4.2
+     (rewritten for Elixir in Session 12) now defines the concrete behaviour
+     E must implement. The `on_reflect_exit(context)` callback receives
+     `qualified_id`, `plan_dir`, `vault_runtime_dir`,
+     `session_log_latest_entry`, and an `ingestion_fired_setter` closure.
+     E's implementation should call `ingestion_fired_setter` at Stage 5
+     start. B invokes the hook non-blockingly via `Task.Supervisor`; E
+     must handle being run under a task supervisor (no blocking the
+     PlanActor). Wire this as the entry point that composes the full
+     pipeline (`run_ingestion_cycle`).
   This is the prerequisite amendment task — all other backlog tasks should be
   read through the lens of this amendment once it lands.
 - **Results:** _pending_
