@@ -21,8 +21,43 @@ amendment task below makes this explicit.
 
 ## Task Backlog
 
-### F amendment — expert-dispatched knowledge curation `[amendment]`
+### Adopt sub-N Task 15 interface contracts — Stage 5 fan-out types `[amendment]`
 - **Status:** not_started
+- **Dependencies:** none (sub-N Task 15 ships as an early-deliverable PR independently of sub-N Tasks 16+; sub-E can code against these types immediately)
+- **Description:** Sub-N's Session 16 brainstorm (2026-04-15) produced concrete
+  interface contracts that define Stage 5's expert fan-out shape. This task
+  imports / references those contracts and wires them into the F amendment
+  implementation. Concrete items:
+  1. Declare a module alias / dependency on `ScopeMatcher` behaviour (tag-based
+     exact-string set intersection on frontmatter `tags:` fields). Stage 5 uses
+     `ScopeMatcher.match(candidate_tags, expert_tag_set)` to select which
+     ExpertActors receive a given candidate.
+  2. Use `%ExpertAbsorbCandidate{}` as the message struct Stage 5 sends to each
+     matched ExpertActor. Ensure the struct carries the `ingestion-event-id`
+     provenance field (required for physical-duplication tracing when multiple
+     experts absorb the same candidate).
+  3. Handle all three verdict structs from ExpertActors in the Stage 5
+     collector loop:
+     - `READY ABSORB` — record absorbed; expert writes to its domain subtree.
+     - `READY REJECT` — record rejected; move on.
+     - `READY CROSS_LINK <expert-id>` — re-dispatch to the suggested expert
+       (max depth 2; no recursive cross-linking). Second-round dispatch is
+       non-blocking and uses the same `%ExpertAbsorbCandidate{}` struct.
+  4. Handle `%ExpertConflict{}` and other `%Expert.*` event structs: surface
+     them via the sub-M observability bus for human review; do not block
+     the ingestion cycle.
+  5. Implement the **orphan-candidate path**: when `ScopeMatcher` returns an
+     empty set (zero tag-matching experts), sub-E writes the candidate directly
+     to `<vault>/knowledge/uncategorized/` using the same `SafeFileWriter`
+     invariants as Stage 5's normal write path. Emit an
+     `Ingestion.Applied` event with `source: :uncategorized`.
+  6. Write unit tests for: matched dispatch, orphan path, cross-link
+     re-dispatch (depth 1 and depth 2), multi-expert absorption (provenance
+     field present on each write), conflict event surfacing.
+- **Results:** _pending_
+
+### F amendment — expert-dispatched knowledge curation `[amendment]`
+- **Status:** in_progress (spec-level rewrite done; implementation items remain)
 - **Dependencies:** none (unblocked, can run in parallel with A/B/D/M amendments)
 - **Description:** Apply the orchestrator Session 9 BEAM pivot and F's
   design-doc amendments to sub-E's implementation plan. Concrete changes:
@@ -44,7 +79,14 @@ amendment task below makes this explicit.
   3. **Event channel re-cast:** `tokio mpsc` channel becomes either a GenStage
      producer-consumer or Phoenix.PubSub (aligning with M's `:telemetry` +
      typed-event-struct pattern). The parallel-emit pattern with M's
-     observability bus is unchanged in intent.
+     observability bus is unchanged in intent. **Concrete structs now
+     available:** sub-M's design doc §4.1 (rewritten inline in Session 15,
+     2026-04-15) defines the sealed `Mnemosyne.Event.*` struct set. The six
+     `Ingestion.*` variants (`Ingestion.Applied`, `Ingestion.PromptRequired`,
+     `Ingestion.Deferred`, `Ingestion.Rejected`, `Ingestion.ResearchSession`,
+     `Ingestion.CycleSummary`) are concrete and ready for sub-E to consume.
+     The F amendment must wire sub-E's event emission against these sealed
+     structs rather than defining its own ad-hoc event shapes.
   4. **Query message contract:** Define the Query message schema that Stage 5
      sends to experts — must include: candidate entry, proposed op, originating
      section provenance, confidence, axis, tier routing decision. Sub-N
@@ -67,7 +109,31 @@ amendment task below makes this explicit.
      pipeline (`run_ingestion_cycle`).
   This is the prerequisite amendment task — all other backlog tasks should be
   read through the lens of this amendment once it lands.
-- **Results:** _pending_
+- **Results:** **Items 1–5 done 2026-04-16 (orchestrator Session 17).** Spec
+  inline-rewritten at `docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md`
+  per the "amendments rewrite inline, not as supersede layers" discipline.
+  §-numbering preserved for downstream cross-references. Decision Trail gained
+  Q15 (BEAM pivot) and Q16 (Stage 5 expert dispatch) entries plus correction
+  notes folded back into Q1, Q2, Q5, Q9, Q10, Q11, Q13. Concrete wirings:
+  `Mnemosyne.ReflectExitHook` callback contract, `GenStage` pipeline composition,
+  Elixir struct types, `ScopeMatcher.match_candidate/2` call site,
+  `%Mnemosyne.Message.ExpertAbsorbCandidate{}` dispatch, three verdict variants,
+  non-recursive max-depth-2 cross-link, `%Expert.Conflict{}`, orphan path → 
+  `<vault>/knowledge/uncategorized/` via `SafeFileWriter` emitting sub-E-owned
+  `%Ingestion.OrphanCandidate{}`, full consumption of sub-M §4.1's six
+  `%Ingestion.*{}` variants (no parallel sub-E channel — the parallel-emit
+  window collapses to zero per sub-M's adoption matrix), prompt resolution as
+  request-response over sub-M bus + sub-K NDJSON command. Risks 4 (OTP mailbox
+  backpressure) and 5 (`:telemetry` handler crash) added; Risk 1 updated for
+  parallel expert curation. Cross-sub-project requirements section restructured
+  per-sibling (B/C/A/D/F/N/M/H). Rust idiom check clean. **Item 6 remaining:**
+  the actual `Mnemosyne.ReflectExitHook` Elixir implementation is code work, not
+  spec work — it lands when sub-E implementation begins after sub-B's hook
+  module is in place. **Also remaining (separate gate task):** the sub-E
+  implementation task list below still carries Rust framing (`Vec<>`, `tokio
+  mpsc`, trait objects); needs its own rewrite mirroring the sub-B/sub-C/sub-M
+  task-list-rewrite gate-task pattern before any implementation task can be
+  picked up.
 
 ### Define core ingestion types `[types]`
 - **Status:** not_started

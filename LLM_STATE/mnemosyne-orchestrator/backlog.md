@@ -4,6 +4,16 @@ Tasks for merging LLM_CONTEXT functionality into Mnemosyne and building the pers
 
 ## Recent history
 
+**Triage (2026-04-15) — Sub-N done; all orchestrator amendment tasks complete; cross-plan propagations dispatched.** Done tasks cleared from backlog: Priority 0 BEAM spike, Sub-A/B/C/M amendments, Sub-N brainstorm, Sub-F sibling plan scaffold, entire Completed section. Sub-E amendment updated to reference sub-N Task 15 concrete interface contracts (`%ExpertAbsorbCandidate{}`, `ScopeMatcher`, verdict structs, `%Expert.*` events). Priority 1 execution note updated. Dispatched: sub-E (Task 15 types unblock the Stage 5 amendment), sub-M (sub-N adds `Mnemosyne.Event.Expert.*` as a new sealed-struct producer not yet in M's backlog), sub-F (sub-N Tasks 16+ gate on sub-F's `Mnemosyne.Actor` behaviour + `ActorSupervisor` API). Phase: work.
+
+**Session 16 (2026-04-15) — Sub-N brainstormed + sibling plan scaffolded + sub-Q and sub-R surfaced as new research sub-projects.** Sub-N's design doc at `docs/superpowers/specs/2026-04-15-sub-N-domain-experts-design.md` (1104 lines). Sibling plan at `LLM_STATE/sub-N-domain-experts/` with 29 tasks across 9 phases, memory anchors N-1 through N-13, prompt-work.md. Seven brainstorm questions (knowledge scope, dialogue state, knowledge ownership, retrieval strategy, Stage 5 verdict aggregation, scope-matching mechanism, two-timer clarification), eight approval-gated design sections (scope/non-goals, architecture, declaration format, retrieval, query/dialogue protocol, Stage 5 ingestion, lifecycle/hot reload/errors, testing). Two user signals captured as new brainstorm tasks: **sub-Q** (vector-store infrastructure, v1.5+) — appealing as Mnemosyne-wide capability beyond just sub-N's retrieval strategy; **sub-R** (knowledge ontology, research task, v1.5+) — addressing tag-vocabulary drift across sub-N, sub-E, sub-F. Both reserved with no hard-gate on sub-N v1 shipping. Unblocks sub-F Task 3 stub replacement path and sub-E amendment's scope matcher + message struct dependency (sub-N's own Task 15 is an early-deliverable PR for sub-E's parallel work). **Critical track for next cycle**: sub-E amendment (unblocked — can start via the early-deliverable Task 15 interface contracts even before sub-N's actor implementation lands).
+
+**Session 15 (2026-04-15) — Sub-M amendment absorbed; all orchestrator-level amendment tasks done.** Sub-M's design doc rewritten inline across §1–§20 (870 lines, up from 626) following the sub-C/sub-B/sub-A precedent. Sealed `Mnemosyne.Event.*` struct set expanded from 7 Rust variants to 20+ Elixir structs grouped by producer (B/C/F/E/A + M escape hatches). §6 metric catalogue at 23 `Telemetry.Metrics.*` definitions; §5.2 mandates a load-bearing `try/rescue` wrapper on the `:telemetry` handler because `:telemetry` detaches handlers that raise; `:pg` replaces `mpsc::Sender` for TUI fan-out; `mix mnemosyne.metrics` / `mix mnemosyne.diagnose` replace Rust CLI subcommands. Q1–Q5 preserved verbatim with Session-15 correction notes; Q6 (BEAM pivot translation table, 19 rows) and Q7 (reporter selection — `ConsoleReporter` + `SnapshotReporter` v1, `:telemetry_metrics_prometheus` v1.5, OpenTelemetry v2) added. Sibling plan top-notice + new Task 0 gate for downstream Rust task-list rewrite. **Unblocks F Task 0 condition (3) — the final orchestrator-level gate condition is now cleared.** Remaining F Task 0 gate conditions are both sibling-level: sub-B downstream task-list rewrite (sibling plan), sub-C downstream task-list rewrite (sibling plan). All four orchestrator amendment tasks (A, B, C, M) are now done.
+
+**Triage (2026-04-15) — State confirmed; cross-plan propagations dispatched.** All four orchestrator-level F amendment tasks done (A, B, C, M). Two sibling-level F Task 0 conditions remain: sub-B and sub-C downstream task-list rewrites. No task removals, no priority changes. Active critical work: sub-N brainstorm (v1-critical, immediately executable) and sub-E amendment (parallel). Dispatched: sub-F Task 0 conditions (3)+(4) marked cleared; sub-E notified of M § 4.1 `Ingestion.*` struct availability. Phase: work.
+
+**Session 14 (2026-04-15) — Sub-A amendment absorbed; three of four F Task 0 gate conditions met.** Sub-A's design doc rewritten inline across §A1–§A10 (1004 lines, up from 635) following the sub-C/sub-B precedent. All five Session-7 forking decisions survived the runtime swap unchanged because none were language-specific. §A4 vault layout picks up every sub-F surface; §A6 init flow rewritten as 12-step Elixir flow; §A10 Tier 1/Tier 2 resolution rewritten in Elixir. Sibling plan updated. **Unblocks F Task 0 condition (3).** Remaining F Task 0 gate conditions: sub-B downstream task-list rewrite (sibling plan), sub-C downstream task-list rewrite (sibling plan), sub-M amendment absorption (this backlog).
+
 **Session 13 (2026-04-15) — Sub-F sibling plan scaffolded; implementation runway opened.** P3.1 landed. `LLM_STATE/sub-F-hierarchy/` written with 28 implementation tasks derived from F's §11 (Elixir scaffolding → daemon binary → declarative routing → Level 2 agent → integration → tests), plus a Task 0 readiness gate mirroring sub-B's pattern. Memory file captures F-1 through F-12 architectural anchors and the contract F consumes from siblings A/B/C/M. Rust `mnemosyne-tui` binary explicitly excluded as a future separate plan; F's §11.8 cross-plan landings excluded as already-done by F's Session-9 triage. The critical-next-step queue now advances: next is either sub-N brainstorm (v1-critical ExpertActor internals) or the remaining amendment tasks for A, E, M whose inputs are now concrete from B's §4 and C's §11.
 
 **Sessions 10–12 (2026-04-15) — BEAM PTY spike passed, sub-C and sub-B amendments absorbed via inline rewrites.** Session 10 validated pipes-only `erlexec` at `spikes/beam_pty/` (no PTY needed, no Rust wrapper fallback). Session 11 rewrote sub-C's design doc inline for Elixir/erlexec (1186 lines, §1–§11 fresh, tool-call boundary in §4.5 made concrete). Session 12 rewrote sub-B's design doc inline absorbing three simultaneous pivots (LLM_CONTEXT overhaul, sub-F actor commitment, BEAM pivot) — 2296 lines with no supersede layer. Gate tasks added to both sibling backlogs for their downstream implementation-task-list rewrites.
@@ -20,119 +30,13 @@ Tasks for merging LLM_CONTEXT functionality into Mnemosyne and building the pers
 
 ## Priority 0 — Unblock F implementation
 
-### BEAM PTY spike — validate sub-C approach `[spike]`
-- **Status:** done (Session 10, 2026-04-15)
-- **Dependencies:** F brainstorm complete (done)
-- **Owner:** sub-C amendment
-- **Description:** Validate that `erlexec` (or similar Elixir/Erlang PTY library) can cleanly spawn Claude Code with:
-  - Bidirectional PTY I/O for stream-json protocol
-  - Sentinel string detection on assistant-text stream
-  - Process-group termination (SIGTERM → SIGKILL with 500ms grace)
-  - Configurable tool profiles per spawn
-  - Backpressure-friendly streaming output
-
-  This is the one real ecosystem unknown after the BEAM commitment. A few hours of spike work will answer it. If `erlexec` works cleanly, sub-C's amendment task is straightforward and F's sibling plan scaffolding can proceed. If `erlexec` fails, the fallback is a small Rust PTY-wrapper binary invoked from Elixir as an Erlang Port.
-- **Results:** **PASS**, with one important inversion. Spike at `spikes/beam_pty/` using Elixir 1.19.5 + Erlang/OTP 28 + erlexec 2.2.3. 8/8 tests green (6 sentinel unit + 2 live probes against the real `claude` CLI on haiku). Evidence at `spikes/beam_pty/results/full-run.log`.
-  - **Inversion**: the "PTY" premise was wrong. `claude -p --input-format stream-json --output-format stream-json` is pure NDJSON over stdio — no pseudo-terminal required. Worse, erlexec's `:pty + :stdin` combination does NOT wire the caller's pipe to the child's real stdin: claude reads nothing and errors with `Input must be provided either through stdin or as a prompt argument when using --print`. Pipes-only (`[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group]`) works perfectly — `:exec.send/2` delivers NDJSON to the child, output arrives as `{:stdout, ospid, binary}` messages for each line (`system/init`, `rate_limit_event`, `assistant/thinking`, `assistant/text`, `result/success`), `{:DOWN, ospid, :process, pid, reason}` fires on exit.
-  - **Sentinel detection**: sliding-buffer matcher with window bounded to `sentinel_size - 1` bytes validated against single-chunk, two-chunk split, grapheme-by-grapheme drip, false-prefix, and false-overlap cases. Successfully detects claude's assistant text when instructed to emit the sentinel.
-  - **Process-group termination**: `:kill_group` option + `:exec.kill(ospid, 15)` followed by a 500ms grace window and SIGKILL fallback kills the grandchild of `/bin/sh -c "sleep 60 & wait"`. Verified with `kill -0` liveness check.
-  - **Tool profiles**: `--disallowed-tools` passes through at CLI flag level. Visible in the `system/init` event's `tools` array. No adapter work needed.
-  - **Backpressure**: BEAM mailboxes are unbounded; draining via `receive` that processes each chunk before accepting the next is sufficient. No dropped data observed.
-  - **Known noise**: user-global `settings.json` cmux SessionStart hooks emit ~10KB of hook JSON on every claude invocation. Silenced with `--setting-sources project,local --no-session-persistence`.
-  - **Takeaway for sub-C amendment**: drop "PTY" from the stream-json path entirely. Wrap one GenServer per live session, parse NDJSON lines, dispatch to sub-M telemetry boundary, route tool-use events to in-session query handler. Detect `{"type":"result"}` as the protocol-level "turn over" signal, orthogonal to the phase-prompt sentinel (task-level "done"). Full recommendations in `spikes/beam_pty/README.md`.
-  - **Unblocks**: P1.3 (sub-C amendment), P3.1 (sub-F sibling plan scaffolding), and by extension the entire sub-C + sub-F implementation runway.
-
-  **Exit criteria**: either a working Elixir script that spawns Claude Code, runs a trivial prompt, captures output until a sentinel, and terminates the process cleanly — or a documented reason why the approach won't work, with a fallback plan.
-
-  **Output:** short spike report at `docs/superpowers/specs/2026-MM-DD-beam-pty-spike.md` and a decision: proceed with `erlexec` or implement the Rust PTY-wrapper fallback.
+_All Priority 0 tasks complete. Section retained as heading only for historical reference._
 
 ## Priority 1 — F-triggered amendments to done brainstorms
 
 F's architecture commitment affects every done brainstorm. Each amendment is a short work phase: read the existing design doc, identify Rust-specific or pre-F-specific sections, replace with BEAM/actor/dispatch-aware equivalents, commit.
 
-**Execution note (triage 2026-04-15, post-Session 12):** Sub-B and Sub-C amendments both completed (Sessions 12 and 11 respectively). Both design docs rewritten inline for Elixir/BEAM — no supersede layers. Seven P1 tasks remain (A, D, E, M, G, H, I), all unblocked and parallelizable. **Critical path for next cycle:** **(1)** P3.1 (scaffold sub-F sibling plan) — single highest-leverage task, creates the implementation runway for the core daemon, fully unblocked since Session 10. **(2)** Sub-N brainstorm (P2) — v1-critical and independently executable; depends only on F (done); ExpertActor must ship alongside PlanActor. **(3)** Remaining P1 amendments — A, E, M are the most valuable (they amend existing design docs and can now use concrete inputs from B's rewritten §4 and C's rewritten §11); G, H, I produce scope-framing documents for future brainstorms (no existing design doc to amend). The validated pivot-rewrite pattern (inline rewrite, not supersede layers) applies to all. Sub-B's §4.2 (ReflectExitHook behaviour) directly feeds E's amendment; Sub-B's §4.4 (seven `%PhaseLifecycle{}` event variants) directly feeds M's amendment.
-
-### Sub-A amendment — daemon caller integration `[amendment]`
-- **Status:** not_started
-- **Dependencies:** F done
-- **Description:** Amend sub-A's design doc to reflect:
-  - `verify_vault` is called by the Elixir daemon at startup, not by per-invocation Rust CLI
-  - Config discovery chain unchanged (`--vault` → `MNEMOSYNE_VAULT` → user config → hard error)
-  - `mnemosyne.toml` schema unchanged; identity marker works identically
-  - `init`, `init --from`, `adopt-project` commands become daemon subcommands (`mnemosyne daemon --init`, etc.)
-  - v0.1.0 path deletion tasks (A tasks 11-12) no longer apply to Rust code; instead, the entire Rust CLI is retired in favor of daemon + TUI split
-  
-  Small amendment — mostly re-framing, not redesigning.
-- **Results:** _pending_
-
-### Sub-B amendment — actor-hosted phase cycle and schema pruning `[amendment]`
-- **Status:** done (Session 12, 2026-04-15)
-- **Dependencies:** F done, sub-C amendment (Session 11)
-- **Description:** Amend sub-B's design doc to reflect:
-  - `PhaseRunner` runs **inside a PlanActor GenServer**, not as a standalone process main loop
-  - Phase transitions driven by `{:run_phase, _}` messages from attached clients
-  - `plan-state.md` frontmatter schema pruning: remove `plan-id`, `host-project`, `dev-root` (all derivable from filesystem path). Add `description:` (required, ≤120 chars, non-placeholder)
-  - `{{RELATED_PLANS}}` placeholder renamed to `{{VAULT_CATALOG}}` with new substitution content (full vault catalog with dispatch rules)
-  - `related-plans.md` file concept deleted entirely
-  - F's `DispatchProcessor` and `QueryProcessor` run as phase-exit hooks
-  - `StagingDirectory::render` descent invariant unchanged
-  - `ManualEditorExecutor` still exists as the human-driver path
-  - TUI framing changes: TUI is a daemon client attached to a PlanActor, not a process main loop
-
-  Moderate amendment — the phase-cycle mechanics survive but their process-architecture context changes.
-- **Results:** Rewritten inline across §1–§6 of `docs/superpowers/specs/2026-04-12-sub-B-phase-cycle-design.md` following the sub-C precedent (no supersede layer). The Rust framing is replaced wholesale; original Q1–Q17 decisions are preserved in Appendix A with Session-12 correction notes, and Q18 (LLM_CONTEXT overhaul), Q19 (sub-F pivot), Q20 (BEAM pivot + BEAM PTY spike) record the amendment substance. Doc is 2296 lines.
-  - **§1 Scope** — fresh Elixir-native in/out of scope. Four-phase cycle (`work → reflect → compact → triage`) as first-class goal. PlanActor-hosted runner. Description discipline. Five-placeholder set. Non-goals add "no B-owned TUI" (TUI is sub-F's separate Rust client binary).
-  - **§2 Architecture** — Mermaid diagram rewritten with PlanActor + PhaseRunner + Executors + phase-exit hooks + sub-M telemetry boundary. Module table lists eleven Elixir modules B owns. Core types are Elixir structs with `@enforce_keys`; no `Box<dyn>` plumbing remains. §2.3.2 `plan-state.md` schema is pruned (no `plan-id`, `host-project`, `dev-root`; `description:` required with ≤120-char hard cap; `mnemosyne-pid` → `daemon-pid`; `compact-baseline` sticky integer added). §2.3.3 `PhaseRunner.run_phase/4` 13-step flow includes pre-work hook invocation (step 2), compact-trigger branching (step 1 exception for the skipped branch), session-log append (step 9), ReflectExitHook non-blocking fire (step 12), DispatchProcessor + QueryProcessor phase-exit hooks on non-compact phases (step 13). §2.3.4 `PhaseExecutor @behaviour` with three implementors — `LlmHarnessExecutor` consumes sub-C's session GenServer via `attach_consumer/2` + `handle_info/2` with a sliding-buffer sentinel matcher. §2.4 five-placeholder substitution with `{{VAULT_CATALOG}}` replacing `{{RELATED_PLANS}}`. §2.5 `Mnemosyne.Prompts` with `@external_resource` + `File.read!/1` compile-time embedding; vendor list is `phases/{work,reflect,compact,triage}.md` + `fixed-memory/{coding-style,coding-style-rust,memory-style}.md` + `create-plan.md` (pre-overhaul filenames explicitly excluded). §2.6 dev-root layout uses sub-F's `project-root/` reserved directory. §2.7 session-log + `latest-session.md` lifecycle with ISO 8601 UTC seconds timestamps and the write-then-append pattern.
-  - **§3 Runtime Lifecycle** — PlanActor state diagram replaces the old process-lifecycle state machine. Crash recovery scenarios A/B/C re-cast as PlanActor startup actions. Interrupted/takeover flow uses typed `%PhaseLifecycle{kind: :takeover_offered, ...}` events + PlanActor message protocol.
-  - **§4 External Interfaces** — §4.1 full sub-C consumption contract (nine requirements B imposes on C, including cmux noise mitigation and the control-vs-observation disambiguation). §4.2 `Mnemosyne.ReflectExitHook` behaviour with the `ingestion_fired_setter` closure + non-blocking invocation via `Task.Supervisor`. §4.3 `DispatchProcessor` / `QueryProcessor` phase-exit contracts (compact excluded). §4.4 typed event emission list to sub-M (seven `%PhaseLifecycle{}` variants). §4.5 PlanActor message contract (five messages F must accept from B).
-  - **§5 Testing** — Layer 1 unit test matrix rewritten per new module set. Layer 2 integration via FixtureReplay adapter inside a minimal PlanActor stub. Layer 3 `:live` ExUnit tag instead of Rust CI gate. §5.2 records that the Obsidian+symlinks spike passed 6/6 (Session 5, Task 0 cleared). §5.3 integration-over-reinvention table re-cast for Elixir libraries. §5.4 seven risks ranked (compact-trigger misfire, cold-spawn latency, sentinel false positives, concurrent edits, schema-version discipline, reverse substitution collisions, description drift). §5.5 open questions updated.
-  - **§6 Cross-sub-project Requirements** — every sibling section rewritten. D's collapsed scope (no per-plan advisory locks; daemon singleton lock only) documented explicitly. E's Stage 5 dispatch-to-experts pending. F's hierarchy + vault catalog + dispatch/query contract is the full interface. G's migration scope includes the Rust CLI retirement and the `related-plans.md` deletion. H's skills become attached-client actions. I re-scoped for the vault catalog + routing module as user-visible surfaces. M consumes the typed event structs B emits. N, K, L, O, P have no direct coupling to B.
-  - **Appendix A** — Q1–Q17 preserved with Session-12 correction notes where a decision's framing was re-cast (Q1 placeholder set, Q2 schema pruning, Q3 embedding rehousing, Q6 takeover as typed event, Q8 long-running process as daemon, Q9 TUI as separate client, Q14 IPC hardening as F's socket, Q16 `project-root` collapse). Q18–Q20 are new: LLM_CONTEXT overhaul (seven items absorbed), sub-F actor commitment (four items), BEAM pivot + BEAM PTY spike findings (Rust→BEAM translation table + three material findings from the spike). Post-write clarifications block preserves the control-vs-observation and task-level-vs-protocol-level completion distinctions.
-  - **Appendix B** — `mix.exs` deps projection: `{:yaml_elixir, "~> 2.9"}` new, `{:jason, ...}` / `{:telemetry, ...}` / `{:erlexec, ...}` pre-existing. No Rust-side deps.
-  - **Appendix C** — Glossary rewritten with Elixir terms (Compact phase/baseline/trigger, Descent invariant, Embedded prompts, PlanActor, Phase composition, Protocol-level vs task-level completion, Sliding-buffer sentinel matcher, `{{VAULT_CATALOG}}`).
-  Sibling plan updates:
-  - `LLM_STATE/sub-B-phase-cycle/backlog.md` top-notice rewritten to point at the rewritten design doc and flag the downstream task-list rewrite as the next gate. The three amendment tasks (Absorb Sub-C, Absorb LLM_CONTEXT overhaul, Absorb BEAM pivot) are marked **done** with detailed Results pointing at the relevant sections of the Session-12 rewrite. A new gate task "Rewrite downstream implementation tasks against Session-12 design doc" is added with a twelve-item checklist of what needs to change in the pre-pivot Rust task descriptions (delete `InteractionDriver`/`IpcDriver`/`HeadlessDriver`/`RatatuiDriver` tasks, delete per-plan lock stub, delete the full-startup-sequence task, rewrite `PhaseRunner::run_phase` with the 13-step flow, rewrite `LlmHarnessExecutor` with the attach-consumer loop and sentinel matcher, add new tasks for `PreWorkHook` and `Sentinel.SlidingBuffer`, update sub-M adoption task, update dogfood + live smoke tasks).
-  - `LLM_STATE/sub-B-phase-cycle/memory.md` "BEAM pivot" and "Sub-C Session 11" sections consolidated into a single "Design doc fully rewritten inline for Elixir/BEAM (Session 12)" block with design-doc anchor pointers for implementation.
-
-### Sub-C amendment — Elixir implementation and multi-adapter reservation `[amendment]`
-- **Status:** done (Session 11, 2026-04-15)
-- **Dependencies:** BEAM PTY spike complete (**done**, Session 10)
-- **Description:** Amend sub-C's design doc to reflect:
-  - Implementation in Elixir using pipes-only `erlexec` (spike validated; PTY premise inverted — stream-json is pure NDJSON over stdio, no pseudo-terminal needed)
-  - erlexec opts: `[:monitor, :stdin, {:stdout, self()}, {:stderr, self()}, :kill_group, {:kill_timeout, 1}]`; `:stdin` bare atom required
-  - Actor-style threading replaced by OTP GenServer supervision (one GenServer per session)
-  - `HarnessSpawner` as an Elixir behavior instead of a Rust trait
-  - Tool-call boundary for in-session Queries: C's adapter intercepts `ask_expert` and similar tool calls, routes them through F's router, delivers responses back as tool-call results
-  - Multi-adapter support **reserved for sub-O** via the `[harnesses.*]` config section — v1 only implements Claude Code
-  - Internal session spawning is how plan actors and F's Level 2 routing agent reason
-  - `SpawnLatencyReport` emits via sub-M's `:telemetry` + typed struct events
-  - Detect `{"type":"result"}` as protocol-level "turn over" signal (orthogonal to task-level sentinel)
-  - cmux noise mitigation: `--setting-sources project,local --no-session-persistence` on all daemon-spawned sessions
-
-  Significant amendment — most of C's core design survives but the implementation language and actor-style threading are completely re-cast. Spike results at `spikes/beam_pty/`.
-- **Results:** Rewritten inline across §1–§11 of `docs/superpowers/specs/2026-04-13-sub-C-adapters-design.md`. The original Rust framing is replaced with fresh Elixir/OTP/erlexec content; Session 6 decisions are preserved as Q1–Q5 in Appendix A with explicit post-spike corrections, and new Q6–Q8 record the BEAM pivot, the BEAM PTY spike, and the tool-call boundary introduction. **No supersede-amendment layer; no stale Rust content under a disclaimer.** Doc is 1186 lines (down from 1311 original).
-  - **§1 Scope** — fresh Elixir-native in/out of scope, new goal #9 ("tool-call-boundary extensibility"), non-goals now include "no PTY" as explicit with spike rationale, no `tokio`/async discussion, multi-node reserved to sub-P.
-  - **§2 Architecture** — Mermaid diagram rewritten with GenServer + DynamicSupervisor + erlexec mailbox flow; module layout now `lib/mnemosyne/harness_adapter/`; supervision tree placement under `Mnemosyne.Supervisor` with `restart: :temporary` on session GenServers; dependency footprint at one new Hex dep (`erlexec`).
-  - **§3 Adapter behaviour and typed events** — `@behaviour Mnemosyne.HarnessAdapter` with a single `spawn/1` callback plus `kind/0`; session GenServer contract as documented message shapes (`send_user_message`, `attach_consumer`, `await_exit`); `Mnemosyne.Event.*` sealed struct set (`HarnessOutput`, `SessionLifecycle`, `SpawnLatencyReport`, `SessionExitStatus`, `HarnessError`); contract #8 covers tool-call boundary explicitly ("injected tools are not a control channel").
-  - **§4 ClaudeCode adapter** — complete rewrite. §4.1 pipes-only spawn with the exact erlexec opts and cmux mitigation flags as mandatory. §4.2 session GenServer state + message set with every `handle_info/2` / `handle_call/3` case documented. §4.3 stream-json parser locked against the spike's canonical event set. §4.3.2 protocol-level vs task-level completion semantics preserved. §4.4 two-phase SIGTERM→SIGKILL via `:exec.kill/2` + `Process.send_after/3`. **§4.5 tool-call boundary** — new substantive section: injected tool set (`ask_expert`, `dispatch_to_plan`, `read_vault_catalog`), three injection-mechanism candidates (MCP-over-Unix-socket preferred, stdin preamble fallback, plugin shim fallback), intercept flow via `Mnemosyne.Router.handle_tool_call/4` + `{:router_reply, _, _}`, why-not-control-channel argument. §4.6 error-reason table re-cast to `%SessionExitStatus{reason: _}` variants.
-  - **§5 FixtureReplay adapter** — fresh GenServer implementation walking a JSON-Lines record list via `Process.send_after/3`; same client API as the live adapter; JSON-Lines format survives verbatim with a `Mnemosyne.Event.*` struct projection; `mix mnemosyne.dev.record_fixture` as the canonical dev task.
-  - **§6 Tool profile enforcement** — Elixir pattern-match for `tool_profile_to_args/1`; `handle_info/2`-based defence-in-depth check; injected Mnemosyne tools always allowed regardless of profile.
-  - **§7 Cold-spawn + warm-pool** — C-1 gate (p95 < 5 s, N≥10 cycles) preserved; latency instrumentation now emits as a `%SpawnLatencyReport{}` struct + `:telemetry.execute/3` call + staging JSON file (three-way parallel emission for sub-M's staged migration); v1.5 warm-pool sketch re-cast to a GenServer skeleton.
-  - **§8 Testing** — ExUnit tags (`@moduletag :live`), three-layer strategy preserved; Layer 1 = parser/encoder/struct unit tests; Layer 2 = FixtureReplay-backed GenServer integration with multi-consumer attach coverage; Layer 3 = tagged live tests including tool-call boundary smoke and cmux noise mitigation assertions.
-  - **§9 Risks** — rewritten set: schema drift (parser forward-compat), cold-spawn gate trip, tool-call-boundary injection brittleness (new), exec-port loss mid-session (new, with PlanActor re-spawn mitigation), diagnostic dump-buffer budget (accepted).
-  - **§10 Open questions** — seven-question table. Q3/Q4 marked **resolved by spike**; Q1/Q2/Q5 carry forward as day-1 tasks; Q6 (tool-call boundary injection mechanism) newly open with a day-1 focused spike; Q7 (exec-port supervision) resolved as a design decision.
-  - **§11 Cross-sub-project requirements** — re-cast. B gets one consumed typed event (`%SessionLifecycle{}`) + one executor requirement (sliding-buffer sentinel matcher over `%HarnessOutput{kind: :stdout}`). Rust-specific amendments 1-3 dropped (no BEAM analogue). New §11.3 spells out the F contract (tool-call boundary + `Mnemosyne.Router.handle_tool_call/4`). §11.4 is the telemetry + typed-struct pattern contract to sub-M. §11.5 reserves multi-adapter surface for sub-O with the "no Claude-Code-specific leak in the behaviour" discipline. §11.6 migration note for sub-G.
-  - **Appendix A** — Decision Trail preserved with Q1-Q5 updated where the spike corrected a premise (Q1 "no PTY required" → "no PTY possible") and new Q6 (BEAM pivot), Q7 (BEAM PTY spike), Q8 (tool-call boundary) entries recording the post-brainstorm material. Post-write user clarification from the original brainstorm retained as history.
-  - **Appendix B** — Rust Cargo.toml diff replaced with an `mix.exs` deps projection: `{:erlexec, "~> 2.2"}` new, `{:jason, ...}` + `{:telemetry, ...}` pre-existing, `extra_applications: [:logger, :exec]` entry shown.
-  - **Appendix C** — Glossary updated: Rust entries removed, new entries for `erlexec`, `exec-port`, session GenServer, injected tools, task-level completion, tool-call boundary.
-
-  Sibling plan updates:
-  - `LLM_STATE/sub-C-adapters/backlog.md` top-notice rewritten to point at the rewritten §1–§11 as the starting point for the task-list rewrite; prior §12 breadcrumb removed.
-  - `LLM_STATE/sub-C-adapters/memory.md` BEAM/Elixir pivot section updated accordingly; §12 breadcrumb removed; Q3/Q4 marked RESOLVED and Q6/Q7 newly recorded.
-
-  **Pattern note**: durable feedback memory saved under `memory/feedback_pivot_rewrite.md` — significant pivots get fresh inline rewrites, not supersede layers. Applies to all remaining amendment tasks in this backlog (sub-A, sub-B, sub-D, sub-E, sub-M, sub-G, sub-H, sub-I).
-
-  **Unblocks**: **P3.1** sub-F sibling plan scaffolding (no longer blocked on C's design direction) and the **sub-C implementation-phase backlog rewrite** (discrete task in the sub-C sibling plan).
+**Execution note (triage 2026-04-15, post-Session 16):** All orchestrator-level amendment tasks done (sub-A/B/C Sessions 11–14, sub-M Session 15). Sub-N brainstorm done (Session 16). Sub-F's Task 0 readiness gate has **two remaining conditions**, both sibling-level: (1) sub-B downstream task-list rewrite (sibling plan), (2) sub-C downstream task-list rewrite (sibling plan). **Critical track: Sub-E amendment** — Stage 5 dispatch-to-experts. Sub-N Task 15 delivers concrete types (`%ExpertAbsorbCandidate{}`, `ScopeMatcher`, verdict structs, `%Expert.*` events); amendment is fully unblocked and is the #1 next work item. **Secondary tracks (any order):** D, G, H, I amendment/brainstorm tasks produce scope-framing documents. The pivot-rewrite pattern (inline rewrite, not supersede layers) applies to all remaining amendments.
 
 ### Sub-D brainstorm (scope collapsed) — daemon singleton + external-tool coordination `[brainstorm]`
 - **Status:** not_started
@@ -148,33 +52,21 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
 - **Results:** _pending_
 
 ### Sub-E amendment — expert-dispatched knowledge curation `[amendment]`
-- **Status:** not_started
-- **Dependencies:** F done (N's brainstorm not required — amendment describes the interface E uses from the sub-N contract)
+- **Status:** done
+- **Dependencies:** F done, sub-N done (Task 15 early-deliverable PR delivers concrete interface contracts: `ScopeMatcher` behaviour, `%ExpertAbsorbCandidate{}` struct, verdict structs `READY ABSORB`/`READY REJECT`/`READY CROSS_LINK`, and `%Expert.*` event structs)
 - **Description:** Amend sub-E's design doc to reflect:
-  - Stage 5 (knowledge store write) becomes **dispatch-to-experts**
-  - Candidate entries are sent as Query messages to relevant experts
-  - Each expert reviews the candidate in its own fresh context, decides absorb/reject/cross-link
-  - Multi-expert absorption is allowed (single entry in multiple scopes with wikilinks)
-  - Conflict between experts surfaces in the ingestion event log for human review
-  - Pipeline stages 1-4 (extract, classify, contradict, score) unchanged
+  - Stage 5 (knowledge store write) becomes **parallel fan-out to tag-matching experts**
+  - `ScopeMatcher.match/2` (tag-based exact-string set intersection on frontmatter `tags:`) selects the expert fan-out set
+  - Orphan candidates (empty match set) write directly to `<vault>/knowledge/uncategorized/` via sub-E — no expert involvement
+  - Each tag-matching expert receives `%ExpertAbsorbCandidate{}` and returns a verdict in its own fresh-context session
+  - Each expert returning `READY ABSORB` writes the candidate file into its own Tier 2 directory (physical duplication accepted; no auto-wikilinks in v1)
+  - `READY CROSS_LINK <expert-id>`: rejection-with-suggestion; sub-E collector second-round dispatches to the suggested expert non-recursively (max depth 2)
+  - Contentful disagreement (absorb + reject with non-trivial reason) surfaces `%ExpertConflict{}` event for human review
+  - Pipeline stages 1–4 (extract, classify, contradict, score) unchanged
   - Implementation in Elixir with `GenStage` or `Broadway` for pipeline stages
 
-  Moderate amendment — Stage 5 is re-cast, others stay.
-- **Results:** _pending_
-
-### Sub-M amendment — :telemetry + typed Elixir struct events `[amendment]`
-- **Status:** not_started
-- **Dependencies:** F done
-- **Description:** Amend sub-M's design doc to reflect:
-  - Hybrid pattern unchanged: typed events at boundaries, generic instrumentation underneath
-  - Implementation re-cast from Rust `tracing` + `MnemosyneEvent` enum to Elixir `:telemetry` + `Mnemosyne.Event.*` structs
-  - Typed structs (sealed set): `PhaseTransition`, `MessageRouted`, `RuleFired`, `RuleSuggestion`, `ActorStateChange`, `HarnessOutput`, `DispatchProcessed`, `QueryAnswered`, `Ingestion.*`, `SpawnLatencyReport`
-  - `:telemetry` for transport, `prom_ex` or equivalent for Prometheus metrics export
-  - F's event types added to the sealed set (dispatch/query events, actor lifecycle events, rule firings)
-  - Adoption path for tactical seeds (C's `SpawnLatencyReport`) unchanged: parallel-emit + mechanical verification + seed deletion
-
-  Significant amendment — the architectural split survives but the implementation stack changes entirely.
-- **Results:** _pending_
+  Moderate amendment — Stage 5 is re-cast with concrete sub-N types now available; stages 1–4 stay.
+- **Results:** **done 2026-04-16 (Session 17).** Inline-rewrote `2026-04-12-sub-E-ingestion-design.md` per the "amendments rewrite inline, not as supersede layers" discipline. §1–§5 + Appendix A re-cast onto BEAM/Elixir; §-numbering preserved for downstream cross-references. Decision Trail gained Q15 (BEAM pivot) and Q16 (Stage 5 expert dispatch) entries plus correction notes folded back into Q1, Q2, Q5, Q9, Q10, Q11, Q13. Concrete wirings landed: `Mnemosyne.ReflectExitHook` callback contract from sub-B §4.2; `GenStage` pipeline composition; struct types with `@enforce_keys`; `Mnemosyne.Expert.ScopeMatcher.match_candidate/2` call site; `%Mnemosyne.Message.ExpertAbsorbCandidate{}` dispatch shape; three verdict variants (`:absorb`/`:reject`/`:cross_link_suggested`); non-recursive max-depth-2 cross-link follow-up; `%Mnemosyne.Event.Expert.Conflict{}` for contentful disagreement; orphan path → `<vault>/knowledge/uncategorized/` via `SafeFileWriter` emitting sub-E-owned `%Mnemosyne.Event.Ingestion.OrphanCandidate{}`; full consumption of sub-M §4.1's six `%Mnemosyne.Event.Ingestion.*{}` variants (no parallel sub-E channel); prompt resolution as request-response over sub-M's bus + sub-K NDJSON command rather than embedded `oneshot`. Cross-sub-project requirements section restructured per-sibling (B/C/A/D/F/N/M/H). Risks 4 (OTP mailbox backpressure) and 5 (`:telemetry` handler crash) added; Risk 1 updated for parallel expert curation. Rust idiom check clean (only legitimate "Rust TUI" references survive). Sub-M's adoption matrix entry for sub-E becomes "verify schema" rather than "wrap and migrate" — the parallel-emit window collapses to zero because there's no longer a sub-E channel to wrap. **What this suggests next:** sub-E's sibling-plan backlog still has the Rust-framed implementation tasks (types, SafeFileWriter, `IngestionEvent` channel, etc.); a separate task-list rewrite mirroring the sub-B/sub-C/sub-M pattern is needed before sub-E implementation can begin. Not blocking sub-N implementation, which can proceed against the rewritten contract.
 
 ### Sub-G amendment — daemon invocation pattern in migration `[amendment]`
 - **Status:** not_started
@@ -217,6 +109,62 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
   I's brainstorm can proceed after this amendment is absorbed.
 - **Results:** _pending_
 
+### Brainstorm sub-project Q — vector-store infrastructure `[brainstorm]` (research, v1.5+)
+- **Status:** not_started
+- **Dependencies:** sub-N done (satisfied). Sub-Q does not block sub-N v1 — the `ExpertRetrieval` behaviour chokepoint means sub-Q can land as a drop-in `SemanticRetrieval` strategy without touching sub-N.
+- **Description:** **Surfaced during sub-N brainstorm Session 16.** When sub-N locked v1 on keyword+section retrieval, the user signaled that a vector DB as a Mnemosyne-wide capability is appealing and should be treated as cross-cutting infrastructure, not a sub-N-internal strategy. Sub-Q is the brainstorm that investigates how Mnemosyne should provide vector-store infrastructure as a shared daemon service consumable by multiple sub-projects.
+
+  Potential consumers (cross-cutting):
+  - **Sub-N expert retrieval** — semantic similarity on knowledge files within an expert's scope
+  - **Sub-F vault-catalog search** — "find me plans or experts related to X" at the router level
+  - **Sub-E Stage 3 contradiction detection** — current sub-E uses deterministic heuristics; semantic similarity could improve precision
+  - **Plan actors searching Tier 1/2 knowledge directly** — beyond expert-mediated access
+  - **Sub-O local models** — local embedding models share runtime deps with local inference models, so there's natural overlap with the mixture-of-models sub-project
+
+  Scope for the brainstorm:
+  - Embedding model selection: Ollama? llama.cpp? bundled ONNX model? What accuracy/size/CPU trade-offs matter?
+  - Storage layout: ETS + flat binary? Lightweight SQLite with an extension? Where does the index live relative to `<vault>/runtime/`?
+  - Update policies: on knowledge file write, how does the index stay in sync without blocking writes?
+  - Crash recovery: partial embed states on daemon restart
+  - Similarity function: cosine vs dot product; approximate vs exact nearest-neighbor
+  - Write-time vs read-time embedding: batch nightly reindex vs on-demand?
+  - First-time vault setup: embedding N thousand files takes time; what's the UX?
+  - Integration boundary: a behaviour module that sub-N (and others) implements against — what does the API look like?
+
+  **Research-heavy**: there are real choices with real trade-offs, and the sub-project should investigate before committing. Not a direct implementation task — a brainstorm that produces a design doc.
+
+  Output: design doc at `docs/superpowers/specs/YYYY-MM-DD-sub-Q-vector-store-design.md` and sibling plan at `LLM_STATE/sub-Q-vector-store/`. Reserved for v1.5+; do not land in v1.
+- **Results:** _pending_
+
+### Brainstorm sub-project R — knowledge ontology `[brainstorm]` (research, v1.5+)
+- **Status:** not_started
+- **Dependencies:** sub-N done (satisfied). Sub-R does not block sub-N v1 — v1 uses exact-string tag matching behind the `ScopeMatcher` interface, and sub-R's richer resolver drops in behind the same interface.
+- **Description:** **Surfaced during sub-N brainstorm Session 16.** When sub-N locked tag-based scope matching for Stage 5, the user observed that tag-vocabulary drift is inevitable (e.g., `rust` vs `rustlang` vs `Rust`) and that the right long-term answer is an ontology — and that this should be handled as a separate research task, not inline with sub-N. Sub-R is that research brainstorm.
+
+  Cross-cutting consumers of the ontology:
+  - **Sub-N expert scope matching** — the `ScopeMatcher` becomes ontology-aware (synonyms, hierarchy, polysemy)
+  - **Sub-E Stage 2 classification** — tag inference from extracted facts needs a canonical vocabulary
+  - **Sub-F fact extraction** — concern keywords in `routing.ex` rules should match a canonical vocabulary
+  - **Sub-Q vector-store** — tag-based retrieval filters need vocabulary consistency
+  - **Sub-H TUI skills** — displaying tags to the user needs consistent presentation
+
+  Scope for the brainstorm (research-heavy):
+  - **Formal ontology vs folksonomy vs hybrid**: what's the right model for a single-developer knowledge system?
+  - **Synonym handling**: `rust` ≡ `rustlang` — dictionary-driven? user-editable? auto-inferred?
+  - **Hierarchy**: `rust ⊂ systems-programming ⊂ programming` — what does this buy for scope matching and retrieval?
+  - **Polysemy**: `async` in Rust vs JavaScript vs Python — how does context disambiguate?
+  - **Vocabulary evolution**: how does the ontology grow as new domains appear without breaking existing tags?
+  - **Hooks already reserved in v1**:
+    - Sub-A's vault layout has a reserved `tag-vocabulary.md` file path (currently unused)
+    - Sub-N's `ScopeMatcher` is a behaviour-shaped interface that a richer resolver can drop into
+  - **Literature survey**: 40 years of ontology research in AI/KR; what's the minimum viable ontology for Mnemosyne's scale (single user, <10k knowledge entries initially)?
+  - **Integration with existing tools**: Obsidian's tag system, Dataview queries — what's preserved, what's superseded?
+
+  **Research-heavy**: this is not an implementation task. It's an investigation that produces a design doc plus recommendations. Implementation follows in a separate sub-project derived from sub-R's output.
+
+  Output: design doc at `docs/superpowers/specs/YYYY-MM-DD-sub-R-knowledge-ontology-design.md` and sibling plan at `LLM_STATE/sub-R-knowledge-ontology/`. Reserved for v1.5+; do not land in v1.
+- **Results:** _pending_
+
 ## Priority 2 — Remaining sub-project brainstorms
 
 ### Brainstorm sub-project G — migration `[brainstorm]`
@@ -241,22 +189,6 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
 - **Description:** Document which Obsidian features cover which Mnemosyne data surfaces (Tier 1/2 knowledge, plan state, sessions, ingestion provenance, vault catalog, routing rules). F-impact notes in the Sub-I amendment task (Priority 1) add: Obsidian as daemon client, vault catalog as new data surface, daemon event stream possibilities. Produce the `.obsidian/` template that ships with v1.
 
   Output: design doc at `docs/superpowers/specs/YYYY-MM-DD-sub-I-obsidian-coverage-design.md`.
-- **Results:** _pending_
-
-### Brainstorm sub-project N — domain experts `[brainstorm]` (new, F-added)
-- **Status:** not_started
-- **Dependencies:** F done (satisfied). N's brainstorm needs F's design doc, not F's implementation task list — the sibling plan scaffolding is NOT a prerequisite for N's brainstorm. N's *implementation* plan may depend on F's scaffolding landing first.
-- **Description:** Design the ExpertActor type F reserved as a type hole. Scope:
-  - **Declaration file format** at `<vault>/experts/<expert-id>.md`: persona, knowledge scope, retrieval strategy, optional model override
-  - **Persona authoring**: how users write effective personas; examples for each default expert
-  - **Retrieval strategies**: `keyword` for v1 (grep-based scoring against question terms); `semantic` for v1.5+ (embedding-based); pluggable behind a `strategy:` field
-  - **Default expert set**: initial candidates are `rust-expert`, `research-expert`, `distributed-systems-expert`, `software-architect`, `obsidian-expert`, `ffi-expert`. Finalize and ship with starter declarations.
-  - **Ingestion integration**: how sub-E's Stage 5 dispatch-to-experts reaches N's actors (interface contract)
-  - **Multi-expert absorption**: how the same knowledge entry lands in multiple experts' scopes with cross-linking
-  - **Conflict detection**: how expert disagreements surface for human review
-  - **Query granularity**: one actor per expert? per cluster? per entry? F assumes one actor per expert declaration file, N confirms or revises.
-
-  Output: design doc at `docs/superpowers/specs/YYYY-MM-DD-sub-N-domain-experts-design.md` and sibling plan at `LLM_STATE/sub-N-domain-experts/`.
 - **Results:** _pending_
 
 ### Brainstorm sub-project O — mixture of models `[brainstorm]` (new, F-added, v1.5+)
@@ -317,24 +249,9 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
 
 ## Priority 3 — Decisions and gates
 
-### Scaffold sub-F sibling plan (post BEAM spike) `[scaffold]`
-- **Status:** done (Session 13, 2026-04-15)
-- **Dependencies:** BEAM PTY spike complete (**done**)
-- **Description:** Spike validated pipes-only erlexec (no PTY, no Rust wrapper fallback). Scaffold sub-F's sibling plan at `LLM_STATE/sub-F-hierarchy/` with the task list from F's design doc §11. This is what F's brainstorm deferred because the implementation plan details depend on the spike's outcome.
-
-  Output: `LLM_STATE/sub-F-hierarchy/` with backlog, memory, session-log, phase files.
-- **Results:** Scaffolded at `LLM_STATE/sub-F-hierarchy/` with five files: `backlog.md` (439 lines), `memory.md` (214 lines), `prompt-work.md` (96 lines), `phase.md` (`work`), `session-log.md` (header only). No `latest-session.md` or `related-plans.md` per convention (latest-session is written per cycle and deleted by `run-plan.sh`; same-project siblings are auto-discovered).
-  - **backlog.md** — 28 implementation tasks derived from F's §11.1–§11.5 + §11.7, organized into five sections: Elixir scaffolding (Tasks 1–9), Daemon binary (Tasks 10–13), Declarative routing (Tasks 14–17), Level 2 routing agent (Tasks 18–21), Integration (Tasks 22–24), Tests (Tasks 25–28). Task 0 is a **readiness gate** mirroring sub-B's pattern — blocks all implementation until sub-B's downstream task list is rewritten against the Session-12 design-doc rewrite, sub-C's downstream task list is rewritten against the Session-11 rewrite, and sub-A + sub-M amendments are absorbed. Each task carries Status / Dependencies / Description / Results fields per project convention. Out-of-scope carry-forward notes explicitly exclude: the Rust `mnemosyne-tui` binary (§11.6 — belongs to a separate future plan), F's §11.8 cross-plan landings (done in Session 9 by F's own triage), sub-N ExpertActor internals (F ships only the type hole in Task 3), sub-O/sub-P wiring (F reserves schema hooks only in Task 13).
-  - **memory.md** — primary-reference pointer to the F design doc, parent-plan pointer, quick-reference summary of architectural anchors F-1 through F-12 from the design doc's "Architectural commitments" section, an explicit "Contract with sibling sub-projects" block enumerating what F consumes from A/B/C/M and depends on but not yet landed at F's scaffolding time, a non-goals section, bootstrap discipline, hard-errors-by-default, and the "amendment tasks rewrite specs inline" discipline. Everything a fresh work-phase LLM needs to pick up without reading the 1743-line design doc end-to-end.
-  - **prompt-work.md** — work-phase-specific content following sub-B's pattern: primary reference, about-this-plan, key constraints (Task 0 gate, inline-rewrite amendment discipline, hard errors, filesystem-as-durable-substrate, path-based qualified IDs, OTP mailbox serialization collapsing sub-D's scope, Obsidian-native formats, TDD), Elixir commands (`mix test`, `mix format`, `mix dialyzer`, `@moduletag :live` gating), sibling dependencies, BEAM PTY spike pointer at `spikes/beam_pty/`.
-  - **phase.md** — `work` (initial phase).
-  - **session-log.md** — `# Session Log` header only.
-  - **Non-disruption verified**: all writes confined to the new plan directory only; no Mnemosyne source code touched; no LLM_CONTEXT files touched; no sibling plan files touched.
-  - **Unblocks**: F Task 1+ implementation runway once F's Task 0 gate conditions are met (sub-B + sub-C task-list rewrites, sub-A + sub-M amendment absorption).
-
 ### Decide v1 scope cut `[decision]`
 - **Status:** not_started
-- **Dependencies:** all in-scope brainstorms complete (A, B, C, E, F, M done; D, G, H, I, N pending; K, L pending but v1.5+)
+- **Dependencies:** all in-scope brainstorms complete (A, B, C, E, F, M, N done; D, G, H, I pending; K, L pending but v1.5+)
 - **Description:** Once every in-scope sub-project has been brainstormed and its design doc and implementation plan exist, decide what's actually in v1 vs. deferred to v1.5/v2. Update memory.md with the v1 cut. Adjust dependent implementation plans accordingly.
 
   Sub-N (domain experts) is **in v1** — F relies on ExpertActor shipping alongside PlanActor. Without experts, Query messages have no interesting targets.
@@ -346,53 +263,3 @@ F's architecture commitment affects every done brainstorm. Each amendment is a s
   Sub-I and sub-L are small documentation/spike work that can land wherever convenient.
 - **Results:** _pending_
 
----
-
-## Completed — done and recorded for history
-
-### Brainstorm sub-project F — plan hierarchy + actor model + dispatch + declarative routing `[brainstorm]`
-- **Status:** done (Session 9, 2026-04-14)
-- **Description:** Originally scoped as "plan hierarchy + root plan"; expanded during Session 9 to absorb the full v1 architecture commitment.
-- **Results:**
-  - Design doc at `docs/superpowers/specs/2026-04-14-sub-F-hierarchy-design.md` (comprehensive)
-  - Documentation overhaul: new `README.md`, new `docs/architecture.md`, rewritten `docs/user-guide.md`, rewritten `docs/configuration.md`
-  - Committed architectural decisions (see memory.md for full list):
-    - Mnemosyne is a persistent BEAM daemon (Elixir/OTP)
-    - Two sealed actor types: `PlanActor` and `ExpertActor`
-    - Two message types: `Dispatch` and `Query`
-    - `project-root` as reserved plan directory name; `<project>/mnemosyne/plans/` collapses into it
-    - Path-based qualified plan IDs, never stored
-    - Dispatch asymmetry: same-project direct, cross-project via Level 2 routing agent
-    - Vault catalog (`<vault>/plan-catalog.md`) replaces `related-plans.md`
-    - Description discipline: 120-character hard cap
-    - Declarative routing via pattern-matched Elixir (`<vault>/routing.ex`) with LLM fallback and learning loop
-    - Rust TUI as separate client binary over Unix socket NDJSON
-    - Reserved extensibility hooks for MoM (sub-O) and team mode (sub-P)
-  - Three new sub-projects added: **N (experts)**, **O (MoM, v1.5+)**, **P (team mode, v2+)**
-  - Nine amendment tasks landed on this backlog (A, B, C, E, G, H, I, M, plus D's scope collapse)
-  - BEAM PTY spike identified as the critical unblocker for sub-F's sibling plan scaffolding
-  - Sub-F sibling plan scaffolding **deferred** until spike validates sub-C approach
-
-### Brainstorm sub-project A — global knowledge store `[brainstorm]`
-- **Status:** done (Session 7, 2026-04-13)
-- **Results:** Design doc `specs/2026-04-13-sub-A-global-store-design.md`. Explicit vault discovery, `mnemosyne.toml` marker, init/adopt commands, Tier 1/2 env-var overrides, gitignore policy. v0.1.0 migration scope dropped. Amendment task pending F commitment integration.
-
-### Brainstorm sub-project M — observability framework `[brainstorm]`
-- **Status:** done (Session 7, 2026-04-13)
-- **Results:** Design doc `specs/2026-04-13-sub-M-observability-design.md`. Hybrid `tracing` + `MnemosyneEvent` architecture. Adoption stubs landed in sub-B/C/E; D/F/H/I/G stubs queued. Amendment task pending: re-cast to `:telemetry` + typed Elixir struct events.
-
-### Brainstorm sub-project C — harness adapter layer `[brainstorm]`
-- **Status:** done (Session 6, 2026-04-13)
-- **Results:** Design doc `specs/2026-04-13-sub-C-adapters-design.md`. V1 Claude Code only. Four B amendments (stream-json, SessionLifecycle, SpawnLatencyReport, sentinel detection). Actor threading (3 threads). Process-group termination v1. Amendment task pending: Elixir implementation, BEAM PTY spike, multi-adapter reservation for sub-O.
-
-### Brainstorm sub-project B — phase cycle `[brainstorm]`
-- **Status:** done (Session 4, 2026-04-12)
-- **Results:** Design doc `specs/2026-04-12-sub-B-phase-cycle-design.md`. Produced: hard errors, no slash commands, Obsidian explorer, vault+symlinks, per-project `mnemosyne/`, embedded prompts, Path 1. Folded J. Surfaced K, L. Amendment task pending: actor-hosted phase cycle, schema pruning, placeholder rename, `related-plans.md` deletion.
-
-### Brainstorm sub-project E — post-session knowledge ingestion `[brainstorm]`
-- **Status:** done (Session 3, 2026-04-12)
-- **Results:** Design doc `specs/2026-04-12-sub-E-ingestion-design.md`. B's `ReflectExitHook` as E's subscription point. Amendment task pending: Stage 5 becomes dispatch-to-experts.
-
-### Obsidian symlink validation spike `[spike]`
-- **Status:** done (Session 5, 2026-04-13)
-- **Results:** PASSED 6/6 on macOS and Linux. Evidence at `tests/fixtures/obsidian-validation/results/{macos,linux}/`. Hard-copy-staging fallback not needed. Canonical guivision + OCR evidence pattern established.
