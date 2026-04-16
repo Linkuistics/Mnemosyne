@@ -58,25 +58,62 @@ concurrent with daemon writes is rare.
 
 ### §2.1 Mechanism
 
-`flock(2)` exclusive lock on `<vault>/runtime/daemon.lock`.
+`flock(2)` exclusive lock on a **system-wide** lock file, not inside the
+vault. This prevents the lock from being visible in Obsidian's file tree
+and enforces the v1 single-daemon-per-machine constraint.
 
-### §2.2 Acquisition sequence
+**Lock file location** (per-user, cleared on reboot):
+- **Linux:** `$XDG_RUNTIME_DIR/mnemosyne/daemon.lock`
+  (typically `/run/user/<uid>/mnemosyne/daemon.lock`)
+- **macOS:** `$TMPDIR/mnemosyne/daemon.lock`
+  (per-user temp dir, cleared on reboot)
+
+Resolved at daemon startup via:
+
+```elixir
+defmodule Mnemosyne.Coordination.SingletonLock do
+  @spec lock_dir() :: Path.t()
+  defp lock_dir do
+    base = System.get_env("XDG_RUNTIME_DIR") || System.tmp_dir!()
+    Path.join(base, "mnemosyne")
+  end
+end
+```
+
+The directory is created if absent (single `File.mkdir_p!/1`). The lock file
+is not inside any vault, so Obsidian never sees it.
+
+### §2.2 Lock file content
+
+The lock file contains the daemon's OS PID **and** the vault path it
+serves, newline-separated:
+
+```
+<pid>
+<vault-absolute-path>
+```
+
+This allows the contention error message to include both: `"daemon already
+running (pid <N>) serving vault <other-path>"`.
+
+### §2.3 Acquisition sequence
 
 Boot sequence step 3 (after vault resolve + verify, per sub-A §A6):
 
-1. Open `<vault>/runtime/daemon.lock` with `File.open(..., [:write, :read])`,
+1. Ensure the lock directory exists (`File.mkdir_p!/1`).
+2. Open `<lock_dir>/daemon.lock` with `File.open(..., [:write, :read])`,
    creating if absent.
-2. Attempt `flock(LOCK_EX | LOCK_NB)` (non-blocking exclusive lock) on the
+3. Attempt `flock(LOCK_EX | LOCK_NB)` (non-blocking exclusive lock) on the
    file descriptor.
-3. **On success:** write the daemon's OS PID into the file (overwriting any
-   stale content), flush, hold the fd open for the lifetime of the daemon
-   process. The kernel releases the lock automatically on process exit
-   (clean shutdown or crash).
-4. **On failure** (lock held by another process): read the file content for
-   the incumbent PID, hard-error with
-   `"daemon already running (pid <N>) against vault <path>"`.
+4. **On success:** write the daemon's OS PID and vault path into the file
+   (overwriting any stale content), flush, hold the fd open for the lifetime
+   of the daemon process. The kernel releases the lock automatically on
+   process exit (clean shutdown or crash).
+5. **On failure** (lock held by another process): read the file content for
+   the incumbent PID and vault path, hard-error with
+   `"daemon already running (pid <N>) serving vault <path>"`.
 
-### §2.3 Crash safety
+### §2.4 Crash safety
 
 `flock(2)` is kernel-enforced. The lock is released when the file descriptor
 is closed, which happens automatically on process death regardless of exit
@@ -84,21 +121,22 @@ reason (SIGKILL, OOM, panic, clean shutdown). No stale-lock-file cleanup is
 needed. This is the primary reason for choosing `flock` over
 `O_CREAT | O_EXCL` (which requires PID-liveness checks on stale files).
 
-### §2.4 Separate PID file
+### §2.5 Separate PID file in vault
 
 `<vault>/runtime/daemon.pid` remains a separate file per sub-A's layout.
 Written atomically (temp-then-rename) after the lock is acquired. Bootstrap
 subcommands (`adopt-project`, `rescan`) read `daemon.pid` to decide whether
-to send `:rescan` over the Unix socket — they do not interact with the lock
-file. The PID file is a diagnostic/routing convenience, not the lock
-mechanism.
+to send `:rescan` over the Unix socket — they check the vault-local PID file,
+not the system-wide lock. The PID file is a per-vault diagnostic/routing
+convenience for subcommands that already know which vault they target.
 
-### §2.5 Elixir implementation
+### §2.6 Elixir implementation
 
 Erlang's `:file` module does not expose `flock(2)`. Implementation uses
 `:erlang.open_port/2` with the OS `flock` command:
 
 ```elixir
+lock_path = Path.join(lock_dir(), "daemon.lock")
 port = Port.open(
   {:spawn, ~s(flock -xn #{lock_path} -c "sleep infinity")},
   [:binary, :exit_status]
@@ -114,7 +152,7 @@ Alternative: a small C port program calling `flock(2)` directly. More
 control but introduces a compiled dependency. The `flock` CLI approach is
 preferred for v1 — it requires no compilation and works on macOS and Linux.
 
-### §2.6 Observability
+### §2.7 Observability
 
 Emit `%Diagnostic{target: "mnemosyne.lock"}` events per sub-M's adoption
 matrix:
@@ -285,7 +323,7 @@ D locks the following contracts for sibling consumption:
 
 | Contract | Consumers |
 |---|---|
-| Daemon singleton lock at `<vault>/runtime/daemon.lock` via `flock(2)`, acquired at boot step 3, released on process death | F (boot sequence), A (layout) |
+| System-wide daemon singleton lock at `<runtime_dir>/mnemosyne/daemon.lock` via `flock(2)`, acquired at boot step 3, released on process death. Not inside the vault — invisible to Obsidian. | F (boot sequence), A (removes `daemon.lock` from vault layout) |
 | `Mnemosyne.FileIO.read_tracked/1` and `write_safe/3` as the mandatory file I/O layer for all daemon reads and writes to plan and knowledge files | B (`copy_back/2`), E (`SafeFileWriter`), F (plan-catalog), N (expert absorb writes) |
 | `Mnemosyne.Coordination.FreshnessTracker` ETS table keyed by absolute path, recording SHA-256 content hashes | FileIO (internal), M (diagnostic events) |
 | Three file categories (`:exclusive`, `:phase_owned`, `:human_editable`) with defined conflict strategies per §3.1 | B, E, F, N |
@@ -419,6 +457,17 @@ for file existence, not lock state — stale lock files after crashes require
 PID-liveness checks and introduce edge cases (PID reuse, race between check
 and re-create). `flock` is kernel-enforced and automatically released on
 process death regardless of exit reason. No stale-lock cleanup needed.
+
+### Q1a. System-wide lock vs per-vault lock?
+
+System-wide chosen. The lock file lives at `<runtime_dir>/mnemosyne/daemon.lock`
+(outside the vault) rather than `<vault>/runtime/daemon.lock`. Two reasons:
+(1) a lock file inside the vault is visible in Obsidian's file tree, which
+is undesirable; (2) v1 enforces single-daemon-per-machine via sub-A's
+single-vault discovery, so a system-wide lock is the correct scope. The lock
+file contains both the PID and the vault path being served, so contention
+errors are fully informative. `daemon.pid` stays in `<vault>/runtime/` for
+per-vault bootstrap subcommand routing.
 
 ### Q2. File-system watcher vs content-hash for external-modification detection?
 
