@@ -121,25 +121,7 @@ reason (SIGKILL, OOM, panic, clean shutdown). No stale-lock-file cleanup is
 needed. This is the primary reason for choosing `flock` over
 `O_CREAT | O_EXCL` (which requires PID-liveness checks on stale files).
 
-### §2.5 No separate PID file
-
-`<vault>/runtime/daemon.pid` is **removed** from sub-A's vault layout. It
-is redundant: the system-wide lock file contains both the PID and the vault
-path. Bootstrap subcommands (`adopt-project`, `rescan`) read the system-wide
-lock file to determine whether a daemon is running for their target vault:
-
-1. Read `<runtime_dir>/mnemosyne/daemon.lock` (advisory `flock` does not
-   prevent reads by other processes).
-2. Parse PID and vault path from the file content.
-3. If vault path matches the target vault → daemon is running; send
-   `:rescan` over `<vault>/runtime/daemon.sock`.
-4. If vault path does not match, or the file is absent/empty → no daemon
-   is serving this vault.
-
-This eliminates a duplicate source of truth and one fewer file in the vault's
-`runtime/` directory.
-
-### §2.6 Elixir implementation
+### §2.5 Elixir implementation
 
 Erlang's `:file` module does not expose `flock(2)`. Implementation uses
 `:erlang.open_port/2` with the OS `flock` command:
@@ -161,7 +143,7 @@ Alternative: a small C port program calling `flock(2)` directly. More
 control but introduces a compiled dependency. The `flock` CLI approach is
 preferred for v1 — it requires no compilation and works on macOS and Linux.
 
-### §2.7 Observability
+### §2.6 Observability
 
 Emit `%Diagnostic{target: "mnemosyne.lock"}` events per sub-M's adoption
 matrix:
@@ -364,16 +346,13 @@ D locks the following contracts for sibling consumption:
 
 ### On sub-A (global store)
 
-- Remove `runtime/daemon.lock` and `runtime/daemon.pid` from vault layout
-  (§A4). Both are replaced by the system-wide lock file.
-- Boot sequence step 4 ("Write pid file at `<vault>/runtime/daemon.pid`")
-  is deleted. Steps 3–4 collapse to a single step: "Acquire system-wide
-  singleton lock via `Mnemosyne.Coordination.SingletonLock.acquire/1`."
+- **Applied:** `runtime/daemon.lock` and `runtime/daemon.pid` removed from
+  vault layout (§A4). Boot sequence collapsed from 11 to 10 steps. All
+  references updated to point to system-wide lock location.
 
 ### On sub-F (hierarchy, router, daemon)
 
 - Boot sequence step 3 calls `Mnemosyne.Coordination.SingletonLock.acquire/1`.
-  Step 4 (pid file) is eliminated — the lock file contains the PID.
 - `plan-catalog.md` writes use `FileIO.write_safe/3` with `:exclusive`.
 - Routing rule suggestion commits use `VaultGit.commit/3`.
 - Bootstrap subcommands read the system-wide lock file (not a vault-local
@@ -490,12 +469,9 @@ errors are fully informative.
 
 ### Q1b. Separate daemon.pid file?
 
-Eliminated. The system-wide lock file contains both the PID and the vault
-path, making a separate `<vault>/runtime/daemon.pid` redundant. Bootstrap
-subcommands read the lock file to determine whether a daemon is serving
-their target vault — they get PID and vault path in one read. This removes
-a duplicate source of truth and simplifies sub-A's boot sequence (steps 3–4
-collapse to a single lock-acquisition step).
+Not needed. The system-wide lock file contains both the PID and the vault
+path. Bootstrap subcommands read the lock file to determine whether a daemon
+is serving their target vault — PID and vault path in one read.
 
 ### Q2. File-system watcher vs content-hash for external-modification detection?
 

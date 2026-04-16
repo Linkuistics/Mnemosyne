@@ -37,9 +37,10 @@ In scope:
 
 - Vault directory layout, including every F-committed surface
   (`routing.ex`, `daemon.toml`, `plan-catalog.md`, `experts/`,
-  `runtime/daemon.sock`, `runtime/mailboxes/`), plus the B/D/E
-  surfaces (`runtime/staging/`, `runtime/daemon.lock`,
-  `runtime/events/`, `runtime/interrupts/`).
+  `runtime/daemon.sock`, `runtime/mailboxes/`), plus the B/E
+  surfaces (`runtime/staging/`, `runtime/events/`,
+  `runtime/interrupts/`). D's singleton lock is system-wide, not in
+  the vault.
 - What is git-tracked vs gitignored, and why.
 - Vault discovery mechanism (precedence chain, user config schema),
   resolved **once per daemon start**, not per LLM phase invocation.
@@ -133,11 +134,10 @@ Non-negotiable inputs from sub-projects B, C, E, F, M:
   exception requires explicit written rationale.
 - **D's scope collapsed by F** (Session 9): per-plan advisory locks are
   replaced by OTP mailbox serialization inside PlanActor GenServers.
-  D's remaining scope is a **daemon singleton lock** at
-  `<vault>/runtime/daemon.lock` (via `:file.open/2` with the
-  `:exclusive` flag, or equivalent `flock(2)` call), plus advisory
-  coordination for external-tool (Obsidian, git) concurrent writes. A's
-  vault layout reflects the collapse.
+  D's remaining scope is a **system-wide daemon singleton lock** at
+  `<runtime_dir>/mnemosyne/daemon.lock` via `flock(2)` (not in the
+  vault — invisible to Obsidian), plus advisory coordination for
+  external-tool (Obsidian, git) concurrent writes.
 - **Cross-cutting brainstorms own their own sibling adoption stubs**
   (M): A's sibling implementation plan must include observability
   adoption stubs at the boundaries A introduces, re-cast from Rust
@@ -306,8 +306,6 @@ identity marker.
 ├── archive/                          # tracked (auditable history)
 ├── runtime/                          # all gitignored, machine-local, ephemeral
 │   ├── daemon.sock                   # sub-F Unix socket for TUI/Obsidian/web clients
-│   ├── daemon.lock                   # sub-D singleton lock (flock)
-│   ├── daemon.pid                    # sub-F: running daemon's OS pid (for `rescan` routing)
 │   ├── staging/<plan-path>/          # sub-B phase staging dirs (incl. materialised prompts/)
 │   ├── mailboxes/<qualified-id>.jsonl # sub-F actor mailboxes
 │   ├── interrupts/<qualified-id>/    # pending interrupt commands for live sessions
@@ -330,19 +328,14 @@ commitments after Session 9):
   client (and any future Obsidian/web client) attaches to. Bound by
   the daemon at boot; the inode lives under `runtime/` so it composes
   with the vault's gitignored-runtime discipline.
-- **`runtime/daemon.lock` replaces `runtime/locks/<plan-id>.lock`**:
-  sub-D's scope collapsed to a single daemon-singleton lock because
-  OTP mailbox serialization inside PlanActor GenServers now handles
-  per-plan ordering. The lock file is acquired on daemon boot (after
-  vault resolution succeeds) and released on graceful shutdown. A
-  second `mnemosyne daemon` invocation against the same vault sees
-  the lock and hard-errors with `daemon already running (pid <N>)
-  against vault <path>`.
-- **`runtime/daemon.pid` added**: the OS pid of the running daemon,
-  written atomically after the lock is acquired. Bootstrap subcommands
-  use this to decide whether to send `:rescan` over the Unix socket
-  (daemon running) or skip the notification (daemon not running;
-  next boot picks up the mutation directly from the filesystem).
+- **`runtime/daemon.lock` and `runtime/daemon.pid` removed**:
+  sub-D's singleton lock moved to a **system-wide** location at
+  `<runtime_dir>/mnemosyne/daemon.lock` (outside the vault) so it is
+  invisible to Obsidian. The lock file contains both the daemon's PID
+  and the vault path it serves, eliminating the need for a separate
+  `daemon.pid`. Bootstrap subcommands read the system-wide lock file
+  to determine whether a daemon is running for their target vault.
+  See sub-D's design doc for details.
 - **`runtime/mailboxes/<qualified-id>.jsonl` added**: sub-F's actor
   mailboxes. One JSONL file per plan or expert, keyed by qualified ID
   (which is a filesystem-path-derived value per F). Cursor files for
@@ -408,8 +401,6 @@ Notes:
 | `knowledge/` | yes | Tier 2 global knowledge — the asset users want shared across machines |
 | `archive/` | yes | Auditable history per v0.1.0 design |
 | `runtime/daemon.sock` | no | Unix socket inode; machine-local |
-| `runtime/daemon.lock` | no | Lock file; machine-local |
-| `runtime/daemon.pid` | no | OS pid; machine-local |
 | `runtime/staging/` | no | Phase-boundary scratch |
 | `runtime/mailboxes/` | no | Actor mailboxes; daemon-owned; rebuildable from archive |
 | `runtime/interrupts/` | no | Pending interrupts; ephemeral |
@@ -478,9 +469,9 @@ Step-by-step:
    <path>/.obsidian/snippets/
    <path>/.obsidian/plugins/dataview/
    ```
-   `runtime/` itself is created but `daemon.sock`, `daemon.lock`, and
-   `daemon.pid` are **not** — the running daemon creates them on
-   boot. Init creates only the containing directories.
+   `runtime/` itself is created but `daemon.sock` is **not** — the
+   running daemon creates it on boot. Init creates only the containing
+   directories. (The singleton lock is system-wide, not in the vault.)
 4. **Materialise the embedded `.obsidian/` template.** Each template
    file is embedded into the daemon release at compile time via
    `@external_resource` + `File.read!/1` from `priv/obsidian/`. Init
@@ -574,8 +565,8 @@ Step-by-step:
    but the rest of Mnemosyne expects them to exist. Same
    `File.mkdir_p!` block as fresh init step 3 minus the directories
    that came in via the clone.
-6. **Do not create `daemon.sock`/`daemon.lock`/`daemon.pid`** — those
-   belong to the running daemon, not the clone.
+6. **Do not create `daemon.sock`** — it belongs to the running daemon,
+   not the clone. (The singleton lock is system-wide, not in the vault.)
 7. **Update user config** as in A6 step 11.
 8. **Print success** with the same next-step hints, including a note
    that the user must re-run `mnemosyne adopt-project` once per
@@ -616,11 +607,11 @@ directory.
 5. Create symlink `<vault>/projects/<lowercase-name>/ -> <abs-project-path>/mnemosyne/`.
    Hard error if a symlink (or any file) with that name already
    exists.
-6. If a daemon is running against the active vault (detected via
-   `runtime/daemon.pid` + a liveness check via
-   `System.cmd("kill", ["-0", pid])`), send a `:rescan` NDJSON message
-   over `runtime/daemon.sock`. If no daemon is running, skip the
-   notification.
+6. If a daemon is running against the active vault (detected by reading
+   the system-wide lock file at `<runtime_dir>/mnemosyne/daemon.lock`
+   and checking whether the vault path matches), send a `:rescan`
+   NDJSON message over `runtime/daemon.sock`. If no daemon is serving
+   this vault, skip the notification.
 7. Print confirmation.
 
 Symlink targets are **absolute paths** so the link survives the user
@@ -840,18 +831,19 @@ Key points:
 - The full daemon boot sequence is:
   1. Resolve vault (this function).
   2. Verify vault (this function).
-  3. Acquire singleton lock at `<vault>/runtime/daemon.lock` (sub-D).
-  4. Write pid file at `<vault>/runtime/daemon.pid`.
-  5. Start the OTP supervision tree (sub-F).
-  6. Bind the Unix socket at `<vault>/runtime/daemon.sock` (sub-F).
-  7. Enumerate `<vault>/projects/*/mnemosyne/project-root/` subtrees
+  3. Acquire system-wide singleton lock at
+     `<runtime_dir>/mnemosyne/daemon.lock` (sub-D). The lock file
+     contains the daemon's PID and the vault path.
+  4. Start the OTP supervision tree (sub-F).
+  5. Bind the Unix socket at `<vault>/runtime/daemon.sock` (sub-F).
+  6. Enumerate `<vault>/projects/*/mnemosyne/project-root/` subtrees
      and start PlanActors (sub-F).
-  8. Enumerate `<vault>/experts/*.md` and start ExpertActors (sub-N).
-  9. Load and compile `<vault>/routing.ex` (sub-F).
-  10. Regenerate `<vault>/plan-catalog.md` (sub-F).
-  11. Mark the daemon "ready" via sub-M `:telemetry` event.
-  Any failure in 1–4 is a hard error before the supervision tree
-  starts (clean exit, no garbage). Failures in 5–11 escalate through
+  7. Enumerate `<vault>/experts/*.md` and start ExpertActors (sub-N).
+  8. Load and compile `<vault>/routing.ex` (sub-F).
+  9. Regenerate `<vault>/plan-catalog.md` (sub-F).
+  10. Mark the daemon "ready" via sub-M `:telemetry` event.
+  Any failure in 1–3 is a hard error before the supervision tree
+  starts (clean exit, no garbage). Failures in 4–10 escalate through
   OTP supervision per sub-F's restart strategy.
 
 ## Cross-sub-project contracts
@@ -862,14 +854,14 @@ The contracts A locks for the rest of the orchestrator merge:
 |---|---|
 | Vault discovery = flag → env → user config → hard error; resolved **once at daemon boot** | F (daemon boot), all bootstrap subcommands |
 | Vault marker = `<vault>/mnemosyne.toml` with `[vault].schema_version` | F, D, G |
-| Vault layout per A4 (including `daemon.toml`, `routing.ex`, `plan-catalog.md`, `experts/`, `runtime/{daemon.sock,daemon.lock,daemon.pid,mailboxes,interrupts,events,staging}`) | B (`runtime/staging/`), C (spawn CWD), D (`runtime/daemon.lock`), E (`runtime/events/`, `<vault>/knowledge/`), F (`routing.ex`, `plan-catalog.md`, `experts/`, `daemon.sock`, `mailboxes/`), I (`.obsidian/` template), G (per-machine `adopt-project` reruns, rename migration), N (`experts/` declaration format) |
+| Vault layout per A4 (including `daemon.toml`, `routing.ex`, `plan-catalog.md`, `experts/`, `runtime/{daemon.sock,mailboxes,interrupts,events,staging}`) | B (`runtime/staging/`), C (spawn CWD), D (system-wide lock, not in vault), E (`runtime/events/`, `<vault>/knowledge/`), F (`routing.ex`, `plan-catalog.md`, `experts/`, `daemon.sock`, `mailboxes/`), I (`.obsidian/` template), G (per-machine `adopt-project` reruns, rename migration), N (`experts/` declaration format) |
 | `<project>/mnemosyne/project-root/` as F's reserved root-plan directory (replaces the earlier `plans/` container) | F (owner), G (migration), B (staging paths) |
 | Symlink target = `<vault>/projects/<lowercase-name>/ -> <project>/mnemosyne/` | F, G, I |
 | Tier 1 / Tier 2 split = derived from vault + active plan, env-var overridable; walk-up looks for `mnemosyne/project-root/` ancestor | E, B, F |
-| Gitignore policy per A5 (adds `daemon.{sock,lock,pid}`, `mailboxes/` to gitignored side) | D, E, F, G |
+| Gitignore policy per A5 (adds `daemon.sock`, `mailboxes/` to gitignored side; singleton lock is system-wide, not in vault) | D, E, F, G |
 | `init` scaffolds empty `knowledge/`, empty `experts/`, minimal `routing.ex` stub, minimal `daemon.toml` stub, empty `plan-catalog.md` with machine-owned header | E, F, N, future knowledge-format brainstorm |
-| `adopt-project` is the per-machine project mounting step; on-live-daemon variant sends `:rescan` over `runtime/daemon.sock` | F, G |
-| Daemon singleton lock at `<vault>/runtime/daemon.lock` prevents a second `mnemosyne daemon` against the same vault | D, F |
+| `adopt-project` is the per-machine project mounting step; on-live-daemon variant reads system-wide lock file then sends `:rescan` over `runtime/daemon.sock` | F, G |
+| System-wide daemon singleton lock at `<runtime_dir>/mnemosyne/daemon.lock` prevents a second daemon on the machine | D, F |
 
 ## Memory.md updates this amendment produces
 
@@ -1048,8 +1040,9 @@ push`-able vault from day one.
 **Session-14 correction**: expanded the tracked side with four new
 surfaces (`daemon.toml`, `routing.ex`, `plan-catalog.md`,
 `experts/*.md`) committed by sub-F's Session-9 brainstorm. Expanded
-the gitignored side with five new runtime surfaces (`daemon.sock`,
-`daemon.lock`, `daemon.pid`, `mailboxes/`, `interrupts/`). The
+the gitignored side with three new runtime surfaces (`daemon.sock`,
+`mailboxes/`, `interrupts/`). The singleton lock is system-wide (not
+in vault) per sub-D's Session-18 design. The
 opt-out principle is unchanged; the set of files the principle
 applies to grew.
 
@@ -1106,8 +1099,8 @@ of runtime language. The only changes are:
 - All bootstrap subcommands (`init`, `adopt-project`, `config
   use-vault`, `init --from`) are short-lived escript-style entry
   points that do not start the OTP supervision tree.
-- A second `mnemosyne daemon` against the same vault is blocked by
-  sub-D's singleton lock at `<vault>/runtime/daemon.lock`.
+- A second `mnemosyne daemon` is blocked by sub-D's system-wide
+  singleton lock at `<runtime_dir>/mnemosyne/daemon.lock`.
 
 **Rationale**: every Session-7 decision survives the language swap
 because none of them were language-specific. The "discovery is one
@@ -1139,12 +1132,15 @@ all tracked in A4:
 **New under `runtime/` (gitignored):**
 - `daemon.sock` — F's Unix socket for TUI/Obsidian/web clients. Bound
   by the daemon at boot, not at init.
-- `daemon.lock` — D's singleton lock (collapsed scope). Acquired at
-  daemon boot.
-- `daemon.pid` — F's running-daemon pid file. Written at daemon boot;
-  used by bootstrap subcommands to decide whether to send `:rescan`.
 - `mailboxes/<qualified-id>.jsonl` — F's actor mailboxes. Directory
   created at init; individual mailbox files created by actors.
+
+**Moved out of vault (system-wide):**
+- D's singleton lock moved to `<runtime_dir>/mnemosyne/daemon.lock`
+  (system-wide, not in vault). Contains PID + vault path. Invisible to
+  Obsidian. Bootstrap subcommands read this file to detect whether a
+  daemon is serving their target vault.
+- `daemon.pid` eliminated — redundant with the lock file content.
 
 **Renamed/collapsed:**
 - `<project>/mnemosyne/plans/` → `<project>/mnemosyne/project-root/`
@@ -1153,9 +1149,10 @@ all tracked in A4:
   the rename does not change A's symlink shape. The change only
   affects A's `derive_tier1_from_plan/1` walk-up logic, which now
   searches for `mnemosyne/project-root/` instead of `mnemosyne/plans/`.
-- `runtime/locks/<plan-id>.lock` → `runtime/daemon.lock` (singleton).
-  Sub-D's scope collapsed because OTP mailbox serialization inside
-  PlanActor GenServers handles per-plan ordering.
+- `runtime/locks/<plan-id>.lock` deleted (not renamed). Sub-D's scope
+  collapsed because OTP mailbox serialization inside PlanActor
+  GenServers handles per-plan ordering; the singleton lock is
+  system-wide.
 
 **Rationale**: every addition follows the "A owns the vault-layout
 stable contract; sibling sub-projects own the contents" discipline.
@@ -1206,9 +1203,9 @@ No Rust-side crates. The earlier brainstorm's Cargo.toml projection
   sends to a running daemon over `<vault>/runtime/daemon.sock` after
   mutating the vault (e.g., after `adopt-project` created a new
   symlink).
-- **Singleton daemon lock** — sub-D's collapsed-scope lock file at
-  `<vault>/runtime/daemon.lock`. One daemon per vault, enforced by
-  flock-equivalent on the file.
+- **Singleton daemon lock** — sub-D's system-wide lock file at
+  `<runtime_dir>/mnemosyne/daemon.lock`. One daemon per machine,
+  enforced by `flock(2)`. Contains PID + vault path.
 
 ## Origin
 
