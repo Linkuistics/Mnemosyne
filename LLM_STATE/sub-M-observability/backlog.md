@@ -14,6 +14,148 @@ input from the user.
 
 ## Task Backlog
 
+> **Top-notice (2026-04-15, Session 15 inline rewrite).** The design
+> doc has been rewritten inline across §1–§20 for Elixir/OTP following
+> the sub-C/sub-B/sub-A precedent. Q1–Q5 are preserved verbatim in the
+> Decision Trail with correction notes; new Q6 (BEAM pivot translation
+> table) and Q7 (reporter selection: `ConsoleReporter` + `SnapshotReporter`
+> for v1, `:telemetry_metrics_prometheus` additive in v1.5, OpenTelemetry
+> reserved for v2) record the amendment substance. Start from the
+> rewritten §1–§20 as the authoritative design; use sub-M memory.md's
+> design-doc anchors section as a skimmable index. **Tasks 1–23 below
+> still reference the Rust runtime and must not be executed as written
+> — see Task 0 (rewritten) below.**
+
+### Task 0 — Rewrite downstream task list against Session-15 design doc `[gate]`
+- **Status:** not_started
+- **Dependencies:** Session-15 inline rewrite (**done, 2026-04-15**);
+  follows the sub-B and sub-C sibling-plan gate task pattern
+- **Description:** The Session-15 amendment rewrote the design doc
+  inline, clearing the orchestrator-level amendment task. The
+  downstream task list (Tasks 1–23 below) is still framed against the
+  pre-pivot Rust runtime and blocks the sub-M v1 implementation
+  runway. Rewrite Tasks 1–23 to target the Session-15 design doc:
+
+  **Checklist for the rewrite.**
+  1. **Delete Cargo-flavored setup (current Task 1).** Replace with an
+     Elixir `mix.exs` deps task: add `{:telemetry, "~> 1.2"}` (already
+     present), `{:telemetry_metrics, "~> 0.6"}`, confirm `{:jason, ...}`
+     already in tree, scaffold `lib/mnemosyne/observability/` modules
+     (`handler.ex`, `ring_buffer.ex`, `jsonl_writer.ex`, `tui_bridge.ex`,
+     `metrics.ex`, `supervisor.ex`) + `lib/mnemosyne/event/*.ex` for the
+     sealed struct set. `config/config.exs` + `config/dev.exs` +
+     `config/prod.exs` `Logger` level entries.
+  2. **Delete `MnemosyneEvent` enum task (current Task 2).** Replace
+     with a task-per-struct-module for the 20+ variants in §4.1:
+     `PhaseLifecycle`, `HarnessOutput`, `SessionLifecycle`,
+     `SpawnLatencyReport`, `SessionExitStatus`, `HarnessError`,
+     `ActorStateChange`, `MessageRouted`, `RuleFired`, `RuleCompileError`,
+     `RuleSuggestion`, `DispatchProcessed`, `QueryAnswered`,
+     `Level2Invoked`, `Level2Rejected`, `Ingestion.Applied` /
+     `PromptRequired` / `Deferred` / `Rejected` / `ResearchSession` /
+     `CycleSummary`, `Vault.BootReady`, `Vault.MarkerError`, `Metric`,
+     `Diagnostic`, `Error`. Each struct carries `@enforce_keys` +
+     `@derive Jason.Encoder`. Table-driven unit tests cover
+     `Jason.encode!/1` + `Jason.decode!/1` round-trip for every
+     variant.
+  3. **Delete `metric_names::*` constants task (current Task 3).**
+     Replace with a `Mnemosyne.Observability.Metrics.metrics/0`
+     implementation task that builds the 23-metric catalogue from
+     §6 using `Telemetry.Metrics.*` imports (`counter/2`,
+     `last_value/2`, `distribution/2`). No constants module needed.
+  4. **Delete the Rust catalogue CI test task (current Task 4).**
+     Replace with an ExUnit test that enumerates the list returned
+     by `Metrics.metrics/0`, parses the `## 6. Metrics catalogue`
+     section of the rewritten design doc, and asserts one-to-one
+     correspondence. Uses `@external_resource` to tie the test's
+     cache to the design-doc file so edits to either fail CI.
+  5. **Delete the thread-local vs Visit-API microbenchmark task
+     (current Task 5).** No BEAM analogue — `:telemetry.execute/3`
+     already carries the struct in `metadata.event`; no handoff
+     trick needed.
+  6. **Rewrite `MnemosyneEventLayer` task (current Task 6).** Replace
+     with a `Mnemosyne.Observability.Handler` task: implement
+     `attach/0` via `:telemetry.attach_many/4`, implement
+     `handle_event/4` with the load-bearing `try/rescue` logging via
+     `Logger` (not M), implement `synthesise_diagnostic/3` for
+     third-party events, dispatch in order `RingBuffer → Metrics →
+     TuiBridge → JsonlWriter`. Unit tests cover every struct in the
+     sealed set + third-party event routing + rescue path.
+  7. **Rewrite `InMemoryRingLayer` task (current Task 7).** Replace
+     with `Mnemosyne.Observability.RingBuffer` GenServer (one per
+     session) + `RingBuffer.Sup` DynamicSupervisor. Storage is an
+     Erlang `:queue` with capped size. Public API:
+     `record/2`, `dump_session/2` (sync `GenServer.call`). Tests:
+     ring eviction, per-session isolation, process-scoped fallback,
+     grace window for post-session dumps.
+  8. **Rewrite `JsonlPersistLayer` task (current Task 8).** Replace
+     with `Mnemosyne.Observability.JsonlWriter` GenServer (one per
+     session) + `JsonlWriter.Sup`. Holds a `File` handle opened
+     with `[:append, :raw, :binary, :delayed_write]`. `append/3`
+     encodes via `Jason.encode_to_iodata!/1` + `"\n"`. Sets
+     `{:max_messages, 4096}` process flag for bounded mailbox. Tests:
+     round-trip, line-per-event, truncation safety, supervisor
+     restart on mailbox overflow.
+  9. **Rewrite `MetricsRecorderLayer` task (current Task 9).** Replace
+     with `Mnemosyne.Observability.Metrics` supervisor hosting
+     `Telemetry.Metrics.ConsoleReporter` + a new
+     `SnapshotReporter` (≈150 lines) that maintains bucket histograms
+     in ETS. Public API: `snapshot/1` returns the §7.2 snapshot JSON
+     shape. Tests: counter / distribution / last_value correctness;
+     snapshot structure; `keep:` filter correctness for variants
+     that branch on struct fields.
+  10. **Rewrite `TuiBridgeLayer` task (current Task 10).** Replace
+      with `Mnemosyne.Observability.TuiBridge` GenServer owning a
+      `:pg` process group `:mnemosyne_tui`. `publish/3` uses
+      `:pg.get_members/2` + wrapped `send/2` with drop-oldest +
+      drop counter. Tests: group join/leave, bounded-send
+      behaviour, drop counter increment, multi-client fan-out.
+  11. **Delete `StderrFmtLayer` task (current Task 11).** Replaced by
+      stdlib `Logger` console backend, which the daemon's boot
+      sequence already configures. No M-specific work.
+  12. **Rewrite `ObservabilityHarness` composition task (current
+      Task 12).** Replace with `Mnemosyne.Observability.Supervisor`
+      task — a Supervisor with `:rest_for_one` strategy hosting
+      `Metrics`, `RingBuffer.Sup`, `JsonlWriter.Sup`, `TuiBridge`,
+      then calling `Handler.attach/0` last. Wired into
+      `Mnemosyne.Supervisor`'s child list at daemon boot.
+  13. **Rewrite Risk 5 wiring task (current Task 13).** Replace with
+      `Mnemosyne.Observability.dump_event_tail/4` + panic-safe
+      `try/rescue`. Wiring into B / C / E error paths lives in the
+      adoption tasks in those sibling plans (already landed by M's
+      brainstorm for B, C, E).
+  14. **Rewrite C parallel-emit tasks (current Tasks 14–15).** Task
+      14 becomes "add `[:mnemosyne, :harness, :claude_code,
+      :spawn_latency]` bridge in `Handler.handle_event/4` that
+      rewrites to `%SpawnLatencyReport{}`." Task 15 is the
+      `@moduletag :live` verification test reading both C's
+      staging JSON and M's metric snapshot, asserting ±10ms.
+  15. **Rewrite CLI subcommand tasks (current Tasks 16–17).** Replace
+      with `mix mnemosyne.metrics` and `mix mnemosyne.diagnose`
+      Mix tasks at `lib/mix/tasks/`. `@shortdoc` + `use Mix.Task`
+      + argument parsing via `OptionParser`.
+  16. **Keep cross-plan adoption verification (current Task 18).**
+      Re-check sibling backlogs for adoption stub presence. Note
+      that B / C / F / A already have concrete commitments in
+      their own design docs, so verification is largely a
+      rubber-stamp unless drift is detected.
+  17. **Rewrite integration tests (current Tasks 19–22).** ExUnit
+      with `@moduletag :live` for Layer 3 tests. Re-entrancy test
+      at 1M events with a witness handler counting recursive
+      dispatches; asserts zero recursions, no handler detach events,
+      no `JsonlWriter` restarts.
+  18. **Rewrite v1 acceptance task (current Task 23).** `mix test`
+      / `mix format --check-formatted` / `mix dialyzer` (if enabled)
+      at green; §15 v1 cut checklist; sibling adoption stubs present;
+      parent memory.md updated recording M v1 ship.
+
+  **Discipline.** Follow sub-B's sibling-plan gate-task precedent:
+  keep the original task numbering as "intent specifications" even
+  when task content is rewritten; record the Rust → BEAM translation
+  on each task so future readers can see the delta. Do not execute
+  any task until this rewrite is complete.
+- **Results:** _pending_
+
 ### Task 1 — Cargo.toml deps + module skeleton `[setup]`
 - **Status:** not_started
 - **Dependencies:** none
@@ -354,6 +496,37 @@ input from the user.
   if any future custom layer violates it. Also serves as a smoke
   test for sustained-load correctness of the non-blocking
   `tracing-appender` writer.
+- **Results:** _pending_
+
+### Task 24 — Absorb `Mnemosyne.Event.Expert.*` structs into sealed set + §6 metrics `[types]`
+- **Status:** not_started
+- **Dependencies:** sub-N Task 15 early-deliverable PR (delivers concrete struct definitions); Task 0 (task-list rewrite) must be complete so this task can be written against the Elixir design
+- **Description:** Sub-N (domain experts, brainstormed Session 16, 2026-04-15) is a new typed-event producer that emits six structs in the `Mnemosyne.Event.Expert.*` group. Sub-M's sealed struct set (§4.1) and metric catalogue (§6) must absorb these before sub-N's implementation tasks begin.
+
+  **Struct additions to §4.1** — add the following six structs to the sealed set under a new `Expert` producer group. Each carries `@enforce_keys` + `@derive Jason.Encoder`:
+  1. `%Mnemosyne.Event.Expert.ConsultationStarted{}` — query arrives at an ExpertActor
+  2. `%Mnemosyne.Event.Expert.ConsultationCompleted{}` — verdict returned (absorb/reject/cross-link)
+  3. `%Mnemosyne.Event.Expert.ConflictDetected{}` — contentful disagreement between two experts on the same candidate
+  4. `%Mnemosyne.Event.Expert.DialogueStarted{}` — multi-turn dialogue begins
+  5. `%Mnemosyne.Event.Expert.DialogueTurnCompleted{}` — one turn completes
+  6. `%Mnemosyne.Event.Expert.DialogueExpired{}` — idle TTL (30 min default) reached
+
+  **Metric additions to §6** — add corresponding `Telemetry.Metrics.*` definitions to the catalogue:
+  - `counter("mnemosyne.expert.consultation.started")` — per-domain, per-session
+  - `counter("mnemosyne.expert.consultation.completed")` with `keep:` filter for verdict field (absorb/reject/cross-link)
+  - `distribution("mnemosyne.expert.consultation.latency_ms")` — ConsultationStarted → ConsultationCompleted
+  - `counter("mnemosyne.expert.conflict.detected")` — rate of inter-expert disagreements
+  - `counter("mnemosyne.expert.dialogue.started")`
+  - `counter("mnemosyne.expert.dialogue.turn.completed")`
+  - `distribution("mnemosyne.expert.dialogue.turn_count")` — turns per dialogue (recorded at DialogueExpired or final ConsultationCompleted)
+  - `counter("mnemosyne.expert.dialogue.expired")` — idle TTL expiry rate
+
+  **Design doc edits required:**
+  1. Add sub-N to the producer table in §4.1 alongside B/C/F/E/A.
+  2. Add the eight metric definitions above to §6 with a Decision Trail entry recording the source (sub-N brainstorm, Session 16).
+  3. Update the catalogue-integrity test (backlog Task 4 rewrite under Task 0) to count the new definitions.
+
+  **Discipline.** Adding these variants to the sealed set requires a Decision Trail entry per §4.1's "sealed for v1" rule. The entry should cite sub-N's §9.5 as the producer-side commitment and note that this is the only expansion of the sealed set between v1 and v1.5.
 - **Results:** _pending_
 
 ### Task 23 — v1 ship gate `[release]`

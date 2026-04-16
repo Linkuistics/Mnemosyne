@@ -151,13 +151,14 @@ Adoption tasks landed by M's brainstorm session:
 | `sub-B-phase-cycle` | landed by brainstorm | "Adopt sub-M observability framework — phase lifecycle instrumentation + TUI bridge consumer" |
 | `sub-C-adapters` | landed by brainstorm | "Adopt sub-M observability framework — actor instrumentation + parallel-emit migration of `SpawnLatencyReport`" |
 | `sub-E-ingestion` | landed by brainstorm | "Adopt sub-M observability framework — parallel-emit `MnemosyneEvent::Ingestion` alongside existing `IngestionEvent` channel" |
+| `sub-N-domain-experts` | landed by learning (Session 16, 2026-04-15) | backlog Task 24 — absorb `Mnemosyne.Event.Expert.*` six-struct group into §4.1 sealed set + eight §6 metric definitions; gated on sub-N Task 15 early-deliverable PR |
 
 Adoption tasks queued for sibling plans that don't yet exist:
 
 | Sibling plan | Status | Trigger |
 |---|---|---|
 | `sub-D-concurrency` | queued | When sub-D's brainstorm lands its sibling plan, this plan's triage adds a "M observability adoption" task to D's backlog |
-| `sub-F-hierarchy` | queued | Same trigger as D |
+| `sub-F-hierarchy` | plan scaffolded (Session 13); F's Task 24 is the adoption task; F's Task 0 gate blocks on M's amendment. Sub-A gate condition cleared (Session 14, 2026-04-15); M amendment is now the sole remaining orchestrator-level gate condition for F Task 0 (other two gates are sibling-level: sub-B and sub-C task-list rewrites) | Sub-M amendment (backlog Task 0) is critical-path — F cannot start implementation until M's design doc is rewritten for Elixir/OTP |
 | `sub-H-skills` | queued | Same trigger as D |
 | `sub-I-obsidian-coverage` | queued | Same trigger as D — and I's coverage doc itself absorbs the v1.5 Obsidian session-summary format |
 | `sub-G-migration` | queued | When G's brainstorm lands, add a "delete `<staging>/spawn-latency.json` from staging schema after M parallel-emit window closes" task |
@@ -167,21 +168,114 @@ on each cycle: when any of the queued sibling plans transitions from
 `not_started` to `done` (brainstormed), the next triage adds the
 adoption task to that sibling's backlog.
 
-## BEAM pivot — pending amendment
+## BEAM pivot absorbed via inline rewrite (Session 15, 2026-04-15)
 
-The orchestrator's Session 9 committed Mnemosyne to a persistent BEAM
-daemon (Elixir/OTP). This plan's entire backlog was brainstormed assuming
-Rust (`tracing` + `MnemosyneEvent` enum). The orchestrator now tracks a
-"Sub-M amendment" task to re-cast the implementation from Rust `tracing`
-to Elixir `:telemetry` + `Mnemosyne.Event.*` typed structs. Additional
-scope from the pivot: sub-F's event types (dispatch/query events, actor
-lifecycle events, rule firings) join the sealed event set; `prom_ex` or
-equivalent replaces the `metrics` + `metrics-util` crate stack for
-Prometheus export. **Until the amendment lands, the backlog tasks below
-are stale and must not be executed as written.** The amendment will
-rewrite tasks to target Elixir/OTP idioms (`:telemetry`, `prom_ex`,
-GenServer-based ring buffers, etc.) while preserving the same
-observability goals.
+The orchestrator rewrote the design doc inline across §1–§20 to target
+Elixir/OTP idioms, following the sub-C/sub-B/sub-A precedent (no
+supersede layer). The original Session 7 Q1–Q5 decisions are preserved
+verbatim in the Decision Trail with Session-15 correction notes; new
+Q6 records the BEAM pivot translation table (19 Rust→BEAM idioms); new
+Q7 records the reporter selection (`Telemetry.Metrics.ConsoleReporter`
++ `SnapshotReporter` for v1, `:telemetry_metrics_prometheus` additive
+in v1.5, OpenTelemetry reserved for v2).
+
+### Design-doc anchors for implementation
+
+Consult the rewritten spec before touching the Rust-flavored backlog
+tasks below.
+
+- **§3** — Hex dep stack: `:telemetry`, `:telemetry_metrics`, `Jason`
+  for v1; `:telemetry_metrics_prometheus` for v1.5+; stdlib
+  `GenServer` / `DynamicSupervisor` / `:ets` / `:pg` for subscribers.
+  No `prom_ex`, no `Phoenix.PubSub`, no OpenTelemetry in v1.
+- **§4.1** — sealed `Mnemosyne.Event.*` struct set. 20+ variants grouped
+  by producer: sub-B (one struct with seven `kind` variants), sub-C
+  (five), sub-F (nine), sub-E (six Ingestion variants), sub-A (two
+  Vault variants), M-owned escape hatches (`Metric`, `Diagnostic`,
+  `Error`). Sealed for v1; adding a variant needs a Decision Trail
+  entry.
+- **§4.2** — emission via `Mnemosyne.Observability.emit/1` which wraps
+  `:telemetry.execute/3` with the struct in `metadata.event` and a
+  derived event name prefix (`%Event.PhaseLifecycle{}` →
+  `[:mnemosyne, :phase_lifecycle]`).
+- **§5** — subscriber stack: `Mnemosyne.Observability.Handler` attached
+  via `:telemetry.attach_many/4`, dispatching in order
+  `RingBuffer → Metrics → TuiBridge → JsonlWriter` (cheap first). Four
+  supervised subscribers under `Mnemosyne.Observability.Supervisor`
+  with `:rest_for_one` strategy.
+- **§5.2** — the load-bearing `try/rescue` inside `handle_event/4`:
+  `:telemetry` detaches handlers that raise, so the wrapper must log
+  via `Logger` (not through M) and return `:ok`. New failure mode vs
+  the Rust design — called out in Risk 6.
+- **§5.3** — re-entrancy discipline: no code reachable from the handler
+  may call `Observability.emit/1` or `:telemetry.execute/3`. Subscribers
+  communicate via `GenServer.cast` only. Re-entrancy integration test
+  at 1M events + witness counter (§14).
+- **§6** — metric catalogue: 23 `Telemetry.Metrics.*` definitions
+  (4 phase counters, 3 harness counters + 3 latency distributions +
+  1 last_value, 4 ingestion, 8 routing/actor, 1 sentinel, 1 drop, 3
+  actor-lifecycle; note that a few use `keep:` filters that branch on
+  struct fields). Catalogue test parses §6 and asserts one-to-one
+  correspondence — substitute for the Rust `const &'static str`
+  compile-time protection.
+- **§7** — storage layout integrates with sub-A's `<vault>/runtime/`
+  subtree. `events/<qualified-id>/<session-id>.jsonl`,
+  `metrics/<qualified-id>/<session-id>.json`,
+  `interrupted/.../event-tail.json` (Risk 5 forensics dump).
+- **§8** — Risk 5: one `GenServer.call` to
+  `Mnemosyne.Observability.RingBuffer.dump_session/2` with a grace
+  window so the per-session ring process stays alive briefly after
+  session end.
+- **§9** — staged migration of C's `%SpawnLatencyReport{}` across four
+  phases: pre-M → M v1 parallel-emit → M v1.1 staging-file deletion →
+  M v2 full cleanup. ±10ms verification tolerance.
+- **§10** — cross-plan adoption table: nine siblings (A/B/C/D/E/F/G/H/I).
+  Seven are concrete commitments already landed in the siblings' own
+  design docs (B §4.4, C §7.2 + §11.4, F Task 24, A §A.Reference
+  algorithm step 11, plus E post-F-amendment).
+- **§11.1** — TUI bridge uses `:pg` process group `:mnemosyne_tui`;
+  client-session processes join on subscribe; `send/2` is the
+  fan-out primitive; per-client drop-oldest + drop counter.
+- **§12** — analysis tooling becomes `mix mnemosyne.metrics` and
+  `mix mnemosyne.diagnose` (escript-style Mix tasks), not CLI
+  subcommands.
+- **Q6** — full Rust→BEAM translation table and five material findings
+  that shaped the rewrite (raising-handler-detach, no-compile-time
+  constants, `:pg` vs mpsc, F's growth of §6, A's two new structs).
+
+### Downstream Rust task-list is stale — gate task pending
+
+Tasks 1–23 below were brainstormed against the Rust runtime and still
+reference `tracing`, `tracing-subscriber`, `metrics` / `metrics-util`,
+`cargo`, `MnemosyneEvent` enum, thread-local tricks, `tokio::sync::mpsc`,
+etc. **Do not execute any of them as written.** The next work phase
+(backlog Task 0 gate) must rewrite the downstream task list against
+the Session-15 spec rewrite, following the same discipline sub-B and
+sub-C applied in their sibling plans: delete tasks that have no BEAM
+analogue (e.g. Task 5's thread-local vs Visit-API microbenchmark),
+rewrite Rust module-layout tasks as Elixir module-layout tasks, add
+new tasks for `SnapshotReporter`, the `:pg`-based `TuiBridge`, the
+`try/rescue` handler wrapper, the catalogue-integrity test, and the
+nine new §6 metric definitions from sub-F's routing surface.
+
+**Critical-path update (2026-04-15):** This amendment clears the sole
+remaining orchestrator-level gate condition (3) for sub-F's Task 0.
+The remaining F Task 0 blockers are both sibling-level task-list
+rewrites (sub-B and sub-C), not amendments. Combined with this plan's
+own downstream task-list rewrite (still pending), sub-M's internal
+implementation runway is behind sub-B / sub-C / sub-F in the critical
+path ordering.
+
+### C's rewritten design doc as the concrete Elixir exemplar
+
+Sub-C's rewritten spec remains the load-bearing producer-side reference
+for the amendment implementation. Use C's §3.3 / §7.2 / §11.4 as the
+canonical shape for M's sealed event set, the three-way parallel-emit
+discipline, and the `:telemetry.execute/3` at every boundary contract.
+Sub-B's §4.4 is the canonical PhaseLifecycle producer contract. Sub-F's
+Task 24 is the canonical routing/actor producer contract. Sub-A's
+§A.Reference algorithm step 11 is the canonical Vault.BootReady
+producer.
 
 ### C's rewritten design doc as the concrete Elixir exemplar
 
