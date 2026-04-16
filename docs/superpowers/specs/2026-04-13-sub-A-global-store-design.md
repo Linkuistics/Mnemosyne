@@ -1,103 +1,216 @@
 # Sub-project A — Vault location, discovery, and bootstrap
 
-**Status:** design complete, awaiting implementation
+**Status:** design complete (Session 14 amendment absorbed inline)
 **Brainstorm date:** 2026-04-13
+**Amendment date:** 2026-04-15 (Session 14 — BEAM daemon + sub-F commitments)
 **Parent plan:** `LLM_STATE/mnemosyne-orchestrator/`
 **Sibling implementation plan:** `LLM_STATE/sub-A-global-store/`
 
+> **Amendment status:** rewritten inline 2026-04-15 (Session 14) to
+> absorb the persistent BEAM daemon commitment (Session 9, sub-F) and
+> the `project-root/` + vault-catalog + routing module commitments that
+> sub-F locked in its design doc. The original Rust CLI framing is
+> replaced throughout — no supersede-amendment layer. The Session-7
+> forking decisions are preserved verbatim in **Appendix A (Decision
+> Trail)** with inline correction notes; the new pivots are recorded as
+> Q6 (BEAM pivot) and Q7 (sub-F architectural commitments). Every A1–A10
+> header is kept stable so sibling plan references remain resolvable.
+
 ## Purpose
 
-Replace Mnemosyne v0.1.0's hardcoded `~/.mnemosyne/` knowledge store with an
-explicit, user-chosen, git-tracked **vault** that hosts Tier 2 global
-knowledge, runtime state, the shipped Obsidian template, and per-project
-mount points. Define how the Mnemosyne binary discovers the vault, how it
-verifies a directory really is a vault, how it bootstraps a fresh one
-(or clones an existing one), how Tier 1 and Tier 2 knowledge roots are
-exposed for production and tests, and which contracts the rest of the
-orchestrator's sub-projects can rely on.
+Replace Mnemosyne v0.1.0's hardcoded `~/.mnemosyne/` knowledge store
+with an explicit, user-chosen, git-tracked **vault** that hosts Tier 2
+global knowledge, runtime state (daemon socket, mailboxes, staging,
+interrupts, ingestion events), the shipped Obsidian template, sub-F's
+user-editable routing module, sub-F's auto-regenerated plan catalog,
+sub-F's expert declaration files, daemon configuration, and the
+per-project symlink mounts. Define how the **Mnemosyne daemon**
+(persistent Elixir/OTP application) discovers the vault at startup, how
+it verifies a directory really is a vault, how it bootstraps a fresh
+one (or clones an existing one), how Tier 1 and Tier 2 knowledge roots
+are exposed for PlanActors and ExpertActors at runtime, and which
+contracts the rest of the orchestrator's sub-projects can rely on.
 
 ## Scope
 
 In scope:
 
-- Vault directory layout (the full tree, what is git-tracked vs gitignored)
-- Vault discovery mechanism (precedence chain, user config schema)
-- Vault identity verification (the `mnemosyne.toml` marker)
-- The `mnemosyne init` flow (fresh and clone variants)
-- The `mnemosyne adopt-project` follow-on
-- Tier 1 / Tier 2 root addressability via env-var overrides
-- The cross-cutting contracts other sub-projects consume
+- Vault directory layout, including every F-committed surface
+  (`routing.ex`, `daemon.toml`, `plan-catalog.md`, `experts/`,
+  `runtime/daemon.sock`, `runtime/mailboxes/`), plus the B/D/E
+  surfaces (`runtime/staging/`, `runtime/daemon.lock`,
+  `runtime/events/`, `runtime/interrupts/`).
+- What is git-tracked vs gitignored, and why.
+- Vault discovery mechanism (precedence chain, user config schema),
+  resolved **once per daemon start**, not per LLM phase invocation.
+- Vault identity verification (the `mnemosyne.toml` marker).
+- The `mnemosyne init` daemon subcommand (fresh and clone variants).
+- The `mnemosyne adopt-project` daemon subcommand.
+- Tier 1 / Tier 2 root addressability via env-var overrides for test
+  harnesses and fixture runs.
+- The cross-cutting contracts A locks for B, C, D, E, F, G, I, M.
 
 Out of scope (explicit non-goals listed in detail at the end):
 
-- Migration from `~/.mnemosyne/` (no existing usage)
-- Multi-vault registry / `mnemosyne vault list`
-- Automatic multi-machine sync
-- Tier 2 axis structure (deferred to a future knowledge-format brainstorm)
-- Team-mode multi-developer use (open question)
+- Migration from `~/.mnemosyne/` (no existing usage; deletion not
+  transition).
+- Multi-vault registry / `mnemosyne vault list`.
+- Automatic multi-machine sync.
+- Tier 2 axis structure (deferred to a future knowledge-format
+  brainstorm).
+- Team-mode multi-developer use (sub-P scope; v2+).
+- The contents of sub-F's `routing.ex`, `plan-catalog.md` regenerator,
+  and `experts/<id>.md` files (all owned by sub-F and sub-N).
+- No opinionated Obsidian template refinement (sub-I's scope).
+- No daemon lifecycle, supervision, or actor wiring beyond "vault
+  resolution happens inside the application boot hook" (sub-F owns the
+  daemon shape; sub-B owns the phase runner that actors embed).
 
 ## Constraints absorbed from earlier brainstorms
 
-These are non-negotiable inputs from sub-projects B, E, and M:
+Non-negotiable inputs from sub-projects B, C, E, F, M:
 
-- **Vault layout is dedicated** (B): `<dev-root>/Mnemosyne-vault/` was B's
-  framing, but A discards the implicit dev-root walk-up — the vault is just
-  a user-chosen absolute path, default `~/Mnemosyne-vault/`.
-- **Per-project content via symlinks** (B): the vault accesses each adopted
-  project via `<vault>/projects/<project-name>/` symlinking to
-  `<project>/mnemosyne/`. The `<project>/mnemosyne/` directory is the
-  per-project state container holding `plans/` and `knowledge/`; it is
-  *not* a single plan.
+- **Persistent BEAM daemon** (F, Session 9): Mnemosyne v1 runs as a
+  single long-lived Elixir/OTP application. Vault resolution and
+  verification happen exactly once per daemon start (plus on explicit
+  `mnemosyne rescan`). Internal harness-spawned sessions (fact
+  extraction, Level 2 routing, ingestion) inherit the daemon's resolved
+  vault path via a supervised GenServer; they do **not** re-run the
+  discovery chain.
+- **Dedicated vault with symlinked per-project directories** (B):
+  `<dev-root>/Mnemosyne-vault/` (user-chosen absolute path, default
+  `~/Mnemosyne-vault/`). The vault accesses each adopted project via
+  `<vault>/projects/<project-name>/` symlinking to
+  `<project>/mnemosyne/`. `<project>/mnemosyne/` is the per-project
+  container holding `project-root/` (F's reserved root-plan directory)
+  and `knowledge/`.
 - **Symlink validation passed 6/6** (B, Session 5) on macOS Tahoe and
-  Ubuntu 24.04. The vault-as-view-over-symlinks framing stands; the
-  hard-copy fallback is not needed.
+  Ubuntu 24.04 (commit `98ef7db`). The vault-as-view-over-symlinks
+  framing stands; the hard-copy fallback is not needed.
+- **`project-root/` replaces `plans/`** (F, Session 9): every adopted
+  project has exactly one root plan at
+  `<project>/mnemosyne/project-root/`. The earlier `plans/` container
+  is collapsed away — it was always single-child. `knowledge/` stays
+  as a sibling of `project-root/`, not inside it.
+- **Path-based qualified plan IDs** (F): a plan's qualified ID is a
+  pure function of its filesystem path —
+  `strip_prefix(plan_path, "<vault>/projects/")`. Never stored in
+  frontmatter. A's walk-up logic for Tier 1 resolution must respect
+  this invariant.
+- **User-editable routing module** (F): `<vault>/routing.ex` is an
+  Elixir module with pattern-matched `defp route/2` clauses, hot-code
+  reloaded by the daemon on file change. A ships it tracked in git;
+  init scaffolds a minimal stub.
+- **Vault catalog** (F): `<vault>/plan-catalog.md` is auto-regenerated
+  on plan mutation and every phase-prompt render. Machine-owned. A
+  ships it tracked in git for Obsidian visibility but init leaves it
+  empty — the daemon writes it on first start.
+- **Expert declarations** (F, sub-N): `<vault>/experts/<expert-id>.md`
+  holds per-expert persona + knowledge scope + retrieval strategy. A
+  ships `experts/` tracked in git but init creates it empty. Default
+  expert declaration files are scaffolded by sub-N's brainstorm, not A.
 - **Obsidian-native format discipline** (B): Dataview-friendly
   kebab-case YAML frontmatter, wikilinks, tags, a Mnemosyne-shipped
   `.obsidian/` template with Dataview required and Templater optional.
-- **Self-containment via embedded prompts** (B): Mnemosyne ships its
-  prompts vendored into the binary via `include_str!`. The same pattern
-  applies to the shipped `.obsidian/` template files.
-- **Tier 1 and Tier 2 roots independently addressable as startup config**
-  (E): both must be resolvable at process startup and overridable for
-  tests pointing at fixture directories.
+- **Self-containment via embedded prompts** (B, Session 12): the
+  daemon ships with `fixed-memory/`, `phases/`, and `create-plan.md`
+  embedded via Elixir's `@external_resource` + `File.read!/1` compile-
+  time read pattern. The same self-containment discipline applies to
+  A's `.obsidian/` template files — they are embedded into the daemon
+  release at compile time from `priv/obsidian/`, and materialised on
+  init. **No runtime dependency on `LLM_CONTEXT/`**.
+- **Pipes-only `erlexec` adapter** (C, Session 11): internal reasoning
+  sessions spawned by the daemon (fact extraction, Level 2 routing,
+  ingestion) use C's `Mnemosyne.HarnessAdapter.ClaudeCode` GenServer.
+  Those sessions inherit the parent daemon's resolved vault and do not
+  re-resolve — sub-A's discovery chain runs exactly once at daemon boot.
+- **Tier 1 and Tier 2 roots independently addressable as daemon
+  startup config** (E): both must be resolvable at daemon boot and
+  overridable for tests pointing at fixture directories via env vars.
 - **Hard errors by default** (project-wide): unexpected conditions,
   missing files, schema mismatches all fail loudly with a clear
-  diagnostic naming the offending path. No silent fallbacks.
-- **Cross-cutting brainstorms own their own sibling adoption stubs** (M):
-  A's sibling implementation plan must include observability adoption
-  stubs at the boundaries A introduces.
+  diagnostic naming the offending path. No silent fallbacks. Any
+  exception requires explicit written rationale.
+- **D's scope collapsed by F** (Session 9): per-plan advisory locks are
+  replaced by OTP mailbox serialization inside PlanActor GenServers.
+  D's remaining scope is a **daemon singleton lock** at
+  `<vault>/runtime/daemon.lock` (via `:file.open/2` with the
+  `:exclusive` flag, or equivalent `flock(2)` call), plus advisory
+  coordination for external-tool (Obsidian, git) concurrent writes. A's
+  vault layout reflects the collapse.
+- **Cross-cutting brainstorms own their own sibling adoption stubs**
+  (M): A's sibling implementation plan must include observability
+  adoption stubs at the boundaries A introduces, re-cast from Rust
+  `tracing` + enum events to Elixir `:telemetry` + typed
+  `Mnemosyne.Event.*` structs.
 
 ## Architectural decisions
 
-### A1. Vault discovery is explicit; no walk-up; no implicit dev-root
+### A1. Vault discovery is explicit; no walk-up; no implicit dev-root; resolved once at daemon boot
 
-The Mnemosyne binary resolves the active vault path through a strict
-precedence chain on every invocation:
+The `mnemosyne` binary is **one command with subcommands**. The
+subcommand `mnemosyne daemon` starts the persistent Elixir/OTP
+application; the subcommands `mnemosyne init`, `mnemosyne init --from`,
+`mnemosyne config use-vault`, and `mnemosyne adopt-project` are
+short-lived bootstrap utilities that run outside the daemon.
 
-1. `--vault <path>` CLI flag — wins always; per-invocation override
-2. `MNEMOSYNE_VAULT` env var — set by shell init or test harness
+Vault discovery runs in two distinct contexts:
+
+1. **Daemon boot** (`mnemosyne daemon`): the application supervisor's
+   `init/1` callback resolves the active vault via the precedence
+   chain, verifies it, and stashes the resolved absolute path in a
+   `Mnemosyne.Vault` GenServer. Every actor (PlanActor, ExpertActor,
+   harness adapter, routing engine, ingestion pipeline) reads the vault
+   path from this single source. **No actor re-runs the chain.**
+
+2. **Bootstrap subcommands** (`init`, `adopt-project`, `config
+   use-vault`, `init --from`): these are `Mnemosyne.CLI` escript-style
+   entry points that run without starting the full application tree.
+   They resolve the chain (or create rather than consume, in the case
+   of `init`) and exit. When a user runs `mnemosyne adopt-project
+   <path>` while a daemon is already running, the bootstrap subcommand
+   also sends a `:rescan` message to the running daemon over
+   `<vault>/runtime/daemon.sock` so the live actor tree picks up the
+   new symlink without restart.
+
+The precedence chain is unchanged from the brainstorm:
+
+1. `--vault <path>` CLI flag — wins always; per-invocation override.
+2. `MNEMOSYNE_VAULT` env var — set by shell init or test harness.
 3. User config file:
    - Linux: `~/.config/mnemosyne/config.toml`
    - macOS: `~/Library/Application Support/mnemosyne/config.toml`
    - Windows: `%APPDATA%\mnemosyne\config.toml`
-   - resolved via `dirs::config_dir()`
-4. None of the above → hard error with actionable message
+   - resolved via Elixir's `:filename.basedir(:user_config, "mnemosyne")`
+     (the BEAM-idiomatic equivalent of the Rust `dirs::config_dir()`
+     the brainstorm originally used).
+4. None of the above → hard error with actionable message.
 
 There is no walk-up search from `cwd`. There is no implicit dev-root
-concept. The single-vault-per-machine model is a deliberate
-simplification:
+concept. The single-vault-per-machine model remains a deliberate
+simplification, and the rationale only strengthens under the daemon
+framing:
 
-- It composes cleanly with Mnemosyne-as-LLM-client (internal reasoning
-  sessions inherit the parent's env var with no `cwd` dance)
-- Test isolation is trivial (`MNEMOSYNE_VAULT=$tmpdir` or `--vault $tmpdir`)
-- It is consistent with B's "self-containment, no implicit ambient state"
-  posture
-- It bypasses the "what if a forgotten `Mnemosyne-vault/` lives in some
-  ancestor directory" footgun that walk-up discovery would introduce
+- **Composes cleanly with Mnemosyne-as-LLM-client** (C's internal
+  session spawns): internal harness sessions inherit the daemon's
+  resolved vault via the GenServer registry; they do not perform their
+  own `cwd` dance or re-resolve from env.
+- **Test isolation is trivial**: `MNEMOSYNE_VAULT=$tmpdir mix test` for
+  ExUnit integration tests, same knob the brainstorm committed to.
+- **Consistent with B's "no implicit ambient state" posture**.
+- **Bypasses the ancestor `Mnemosyne-vault/` footgun** that walk-up
+  discovery would introduce.
+- **Plays with BEAM distribution** (reserved for sub-P, v2+): a peer
+  daemon addresses a remote vault through its qualified peer prefix,
+  not by inheriting the local discovery chain. A's single-vault-per-
+  machine constraint has no negative interaction with future
+  multi-daemon transport.
 
-A user who genuinely wants multiple vaults on one machine switches via env
-var or `--vault` per invocation. Mnemosyne does not maintain a registry of
-known vaults.
+A user who genuinely wants multiple vaults on one machine switches via
+env var or `--vault` per bootstrap subcommand, or runs a second daemon
+pointed at a different vault via `MNEMOSYNE_VAULT=<other> mnemosyne
+daemon` (two daemons cannot run against the same vault because D's
+singleton lock forbids it).
 
 ### A2. User config schema (top-level flat)
 
@@ -108,58 +221,73 @@ vault = "/Users/antony/Mnemosyne-vault"
 
 Single key for v1. Future user-level preferences would land under
 `[preferences]` or similar; the top-level `vault` key is the stable
-contract.
+contract. Schema is unchanged by the BEAM pivot — the file is TOML
+regardless of the daemon's implementation language.
 
 ### A3. Vault identity = `<vault>/mnemosyne.toml` schema-versioned marker
 
 A directory is a Mnemosyne vault if and only if it contains a
 `mnemosyne.toml` file at its root with a parseable `[vault]` table
-containing `schema_version`. The same file doubles as the host for
-optional vault-level configuration overrides.
+containing `schema_version`. The marker file is git-tracked and
+doubles as the host for optional vault-level configuration overrides.
 
 ```toml
 # Mnemosyne vault — created by `mnemosyne init`
-# Do not delete the [vault] section. Other sections are optional overrides.
-
 [vault]
 schema_version = 1
 created = "2026-04-13T14:22:00Z"
 created_by_version = "0.2.0"
 
 # Optional: override embedded defaults. Omit any section to keep defaults.
-
 # [language_profiles.rust]
-# markers = ["Cargo.toml"]
-# extensions = [".rs"]
 # dependency_file = "Cargo.toml"
 # dependency_parser = "cargo"
-
-# [context_mappings.cargo_dependencies]
-# tokio = ["async", "tokio", "concurrency"]
 ```
 
 Verification rules (each is a hard error, never a silent fallback):
 
 - File missing → `not a Mnemosyne vault (missing mnemosyne.toml): <path>`
 - File parse error → `invalid mnemosyne.toml: <path>: <parse error>`
-- `schema_version` higher than the binary's `VAULT_SCHEMA_VERSION` →
-  `vault schema_version=N but this binary supports M; upgrade Mnemosyne`
+- `schema_version` higher than the daemon's
+  `@vault_schema_version` module attribute →
+  `vault schema_version=N but this daemon supports M; upgrade Mnemosyne`
 
-The file is git-tracked. It serves three audiences: the Mnemosyne binary
-(identity check), Obsidian users browsing the vault (human-readable
-"what is this directory"), and forward-compat tooling (schema_version is
-the gate for future vault format migrations).
+The marker table is parsed by Elixir's `Toml` library (hex dep
+`{:toml, "~> 0.7"}`). Parse failures surface as
+`%Mnemosyne.Vault.MarkerError{}` structs and log via the sub-M
+`:telemetry` event pipeline before the daemon exits with a non-zero
+status.
+
+The marker serves three audiences:
+
+1. The **Mnemosyne daemon** (identity check at boot and on `rescan`).
+2. **Obsidian users** browsing the vault in their file tree ("what is
+   this directory?").
+3. **Forward-compat tooling**: `schema_version` is the gate for future
+   vault-format migrations.
 
 The marker and the override config share one file because their key
-spaces never overlap, eliminating a dotfile-without-extension and
-mirroring the `Cargo.toml` "project marker + config" pattern Rust users
-already know.
+spaces never overlap. The "marker + config in one TOML file" pattern
+mirrors `Cargo.toml`'s "project marker + config", which happens to also
+echo `mix.exs`'s "project manifest + config" — users coming from either
+ecosystem find the shape familiar.
+
+**`daemon.toml` is a separate file** (per sub-F). It holds daemon-level
+runtime knobs (`[harnesses.*]` for sub-O, `[peers]` for sub-P, fact
+extraction model config, log levels). The two-file split is deliberate:
+`mnemosyne.toml` is the **identity + vault-format override** host;
+`daemon.toml` is the **runtime configuration** host. Swapping a daemon
+version or reconfiguring `[harnesses.*]` must not touch the vault's
+identity marker.
 
 ### A4. Vault directory layout
 
 ```
 <vault>/
-├── mnemosyne.toml                    # marker + optional overrides — tracked
+├── mnemosyne.toml                    # marker + optional vault-format overrides — tracked
+├── daemon.toml                       # sub-F daemon config (harnesses, peers, log levels) — tracked
+├── routing.ex                        # sub-F user-editable routing rules — tracked
+├── plan-catalog.md                   # sub-F auto-regenerated vault catalog — tracked (machine-owned)
 ├── .git/                             # vault's own git
 ├── .gitignore                        # tracked
 ├── .obsidian/                        # curated subset tracked
@@ -173,13 +301,17 @@ already know.
 │   └── cache                         # gitignored
 ├── knowledge/                        # Tier 2 global knowledge — tracked
 │   └── (axes empty at init; accreted by future curation)
+├── experts/                          # sub-F expert declarations — tracked
+│   └── (empty at init; scaffolded by sub-N default expert set)
 ├── archive/                          # tracked (auditable history)
 ├── runtime/                          # all gitignored, machine-local, ephemeral
-│   ├── staging/<plan-id>/            # B's phase staging dirs (incl. materialised prompts/)
-│   ├── locks/<plan-id>.lock          # D's per-plan advisory locks
-│   ├── locks/store.lock              # D's store-level write lock for E ingestion
-│   ├── interrupts/<plan-id>/         # pending interrupt commands for live sessions
-│   └── events/                       # E's ingestion event queue
+│   ├── daemon.sock                   # sub-F Unix socket for TUI/Obsidian/web clients
+│   ├── daemon.lock                   # sub-D singleton lock (flock)
+│   ├── daemon.pid                    # sub-F: running daemon's OS pid (for `rescan` routing)
+│   ├── staging/<plan-path>/          # sub-B phase staging dirs (incl. materialised prompts/)
+│   ├── mailboxes/<qualified-id>.jsonl # sub-F actor mailboxes
+│   ├── interrupts/<qualified-id>/    # pending interrupt commands for live sessions
+│   └── events/                       # sub-E ingestion event queue
 ├── cache/                            # gitignored, derived data (indexes, parsed entries)
 └── projects/                         # gitignored, machine-local symlink targets
     ├── apianyware-macos -> /Users/antony/Development/APIAnyware-MacOS/mnemosyne/
@@ -187,89 +319,197 @@ already know.
     └── mnemosyne -> /Users/antony/Development/Mnemosyne/mnemosyne/
 ```
 
+Changes from the Session-7 layout (all driven by sub-F or sub-C/D/E
+commitments after Session 9):
+
+- **Added at vault root (tracked)**: `daemon.toml`, `routing.ex`,
+  `plan-catalog.md`, `experts/`. All four are owned by sub-F but A
+  scaffolds them at init time so a fresh vault is immediately
+  openable in Obsidian with the expected tree shape.
+- **`runtime/daemon.sock` added**: the Unix socket sub-F's Rust TUI
+  client (and any future Obsidian/web client) attaches to. Bound by
+  the daemon at boot; the inode lives under `runtime/` so it composes
+  with the vault's gitignored-runtime discipline.
+- **`runtime/daemon.lock` replaces `runtime/locks/<plan-id>.lock`**:
+  sub-D's scope collapsed to a single daemon-singleton lock because
+  OTP mailbox serialization inside PlanActor GenServers now handles
+  per-plan ordering. The lock file is acquired on daemon boot (after
+  vault resolution succeeds) and released on graceful shutdown. A
+  second `mnemosyne daemon` invocation against the same vault sees
+  the lock and hard-errors with `daemon already running (pid <N>)
+  against vault <path>`.
+- **`runtime/daemon.pid` added**: the OS pid of the running daemon,
+  written atomically after the lock is acquired. Bootstrap subcommands
+  use this to decide whether to send `:rescan` over the Unix socket
+  (daemon running) or skip the notification (daemon not running;
+  next boot picks up the mutation directly from the filesystem).
+- **`runtime/mailboxes/<qualified-id>.jsonl` added**: sub-F's actor
+  mailboxes. One JSONL file per plan or expert, keyed by qualified ID
+  (which is a filesystem-path-derived value per F). Cursor files for
+  mailbox reads live alongside. Per-actor mailbox concurrency is
+  serialized by the owning GenServer — no file-lock needed.
+- **`runtime/interrupts/<qualified-id>/` rekeyed**: the per-plan
+  interrupt directory is now keyed on the sub-F qualified ID
+  (path-derived) rather than a separate plan-id field. Consistent with
+  "filesystem-derivable data is never cached in metadata."
+- **`<project>/mnemosyne/plans/` collapses to `<project>/mnemosyne/project-root/`**:
+  no change to A's symlink structure (which still points at the
+  `mnemosyne/` container), but a change to what lives inside each
+  mount target. The symlink rule is unchanged; the target contents
+  are F's domain.
+
 Notes:
 
-- **Prompts do not live in the vault.** Per B, prompts are
-  `include_str!`'d into the binary and materialised at
-  `<staging>/prompts/` per phase render.
-- **`init` scaffolds an empty `knowledge/` directory.** No axes are
-  pre-committed; the Tier 2 axis structure is for a future
-  knowledge-format brainstorm. (The v0.1.0 `projects/` axis is
-  explicitly retired — project-specific knowledge is Tier 1 by
-  definition, hosted per-project at `<project>/mnemosyne/knowledge/`.)
+- **Prompts do not live in the vault.** Per sub-B (rewritten Session 12),
+  prompts are compile-time-embedded into the daemon release via
+  `@external_resource` + `File.read!/1` from `priv/prompts/` and
+  materialised at `<staging>/prompts/` per phase render. Same
+  self-containment story applies to A's `.obsidian/` template files
+  (embedded from `priv/obsidian/`).
+- **`init` scaffolds an empty `knowledge/`, an empty `experts/`, and a
+  minimal `routing.ex` stub.** No Tier 2 axes pre-committed. No default
+  expert declarations (sub-N's scope). The minimal `routing.ex` stub
+  is:
+  ```elixir
+  defmodule Mnemosyne.UserRouting do
+    @moduledoc "User-editable routing rules. Safe to edit; hot-reloaded."
+    def route(_kind, _facts), do: :no_route
+  end
+  ```
+  Compiles cleanly, hot-reloads cleanly, fires zero rules — the
+  Level 2 fallback handles everything until the user adds a clause.
+- **`plan-catalog.md` is scaffolded with a machine-owned header** but
+  zero entries. The daemon writes the full catalog on first boot after
+  it has an actor tree to enumerate. A's init leaves just:
+  ```markdown
+  # Mnemosyne Vault Catalog
+
+  > Machine-owned. Regenerated automatically on plan mutation and
+  > every phase-prompt render. Manual edits are overwritten.
+  ```
 - **There is no `<vault>/config.yml`.** v0.1.0's YAML config file is
-  deleted; A's `mnemosyne.toml` (TOML) replaces it. v0.1.0's
-  `Config::load(dir)` site in `src/config.rs` becomes dead code in B's
-  implementation phase.
+  deleted; A's `mnemosyne.toml` + sub-F's `daemon.toml` (both TOML)
+  replace it. v0.1.0's `Config::load(dir)` site in `src/config.rs`
+  becomes dead code along with the rest of the Rust CLI; deletion
+  tracked in sub-G's migration scope.
 
 ### A5. Git-tracking policy
 
 | Subtree | Tracked | Rationale |
 |---|---|---|
-| `mnemosyne.toml` | yes | Vault identity + optional overrides |
+| `mnemosyne.toml` | yes | Vault identity + optional vault-format overrides |
+| `daemon.toml` | yes | Daemon runtime config is user-authored, machine-portable |
+| `routing.ex` | yes | User-authored routing rules — the whole point of user-visible routing |
+| `plan-catalog.md` | yes | Machine-owned but committed so Obsidian shows it in file tree + git history tracks catalog evolution |
+| `experts/*.md` | yes | Expert declarations are authored config and shared across machines |
 | `.gitignore` | yes | Bootstrapping |
 | `.obsidian/` curated subset | yes | The shared template is the whole point of Obsidian-native discipline |
 | `.obsidian/workspace*.json`, `.obsidian/cache` | no | Per-machine pane state, churns constantly |
 | `knowledge/` | yes | Tier 2 global knowledge — the asset users want shared across machines |
 | `archive/` | yes | Auditable history per v0.1.0 design |
-| `runtime/` | no | Machine-local, ephemeral, all rebuildable |
+| `runtime/daemon.sock` | no | Unix socket inode; machine-local |
+| `runtime/daemon.lock` | no | Lock file; machine-local |
+| `runtime/daemon.pid` | no | OS pid; machine-local |
+| `runtime/staging/` | no | Phase-boundary scratch |
+| `runtime/mailboxes/` | no | Actor mailboxes; daemon-owned; rebuildable from archive |
+| `runtime/interrupts/` | no | Pending interrupts; ephemeral |
+| `runtime/events/` | no | Ingestion event queue |
 | `cache/` | no | Derived data, rebuildable |
 | `projects/` symlinks | no | Targets are machine-local absolute paths; including in git is a footgun |
 
-This policy has the property that the vault is a clean push/pullable
-git repo from the user's perspective: `git push` ships knowledge,
-archive, and the shared Obsidian template; it does not ship runtime
-state, machine-local symlink targets, or workspace pane state. The
-gitignore file at vault root encodes the policy.
+Rationale for making `plan-catalog.md` tracked even though it is
+machine-owned: Obsidian's file tree and backlinks index read from git
+state, and Dataview queries against the catalog are far more useful
+when the history of catalog entries is visible across commits. The
+machine-owned header tells humans not to edit; the regeneration
+discipline is hard-errors-by-default (any manual edit between
+regenerations is silently overwritten on the next write, and that is
+documented in the catalog header).
+
+`mailboxes/` is **deliberately gitignored** even though it contains
+durable state — it is rebuildable from `archive/` on daemon boot, and
+including it in git would generate a churn storm. Sub-F's recovery
+discipline is "replay archive into fresh mailboxes on start"; A just
+makes sure the directory exists.
+
+This policy has the property that the vault remains a clean
+push/pullable git repo from the user's perspective: `git push` ships
+knowledge, archive, expert declarations, routing rules, daemon config,
+catalog, vault-format identity, and the shared Obsidian template. It
+does not ship runtime state, the socket, the lock, machine-local
+symlink targets, or workspace pane state. The gitignore file at vault
+root encodes the policy.
 
 ### A6. `mnemosyne init <path>` — fresh vault
 
-Path argument is **optional**, defaulting to `~/Mnemosyne-vault/`. The UX
-gain of a default outweighs the deliberate-placement argument; users
-who want a different location pass it explicitly.
+Short-lived bootstrap subcommand; runs as an escript-style entry point
+outside the daemon's OTP application tree. Path argument is
+**optional**, defaulting to `~/Mnemosyne-vault/`. The UX gain of a
+default outweighs the deliberate-placement argument; users who want a
+different location pass it explicitly.
 
 Step-by-step:
 
 1. **Resolve target.** If `<path>` omitted, default to
-   `dirs::home_dir().join("Mnemosyne-vault")`. Otherwise make `<path>`
-   absolute via `std::path::absolute` (not `canonicalize`, since the
-   path doesn't exist yet). Hard error if `dirs::home_dir()` returns
-   `None`.
+   `Path.join(System.user_home!(), "Mnemosyne-vault")`. Otherwise
+   make `<path>` absolute via `Path.expand/1`. Hard error if
+   `System.user_home/0` returns `nil`.
 2. **Pre-flight checks**, each hard-erroring on failure with the
    offending path in the message:
    - `<path>` does not already exist (file or directory) — refuse to
-     overwrite anything
+     overwrite anything.
    - Parent directory of `<path>` exists — refuse to silently create
-     ancestors
-   - `git --version` succeeds — bootstrap must work or fail loudly
-3. **Create directory tree** with `fs::create_dir_all`:
+     ancestors.
+   - `git` is on PATH (`System.find_executable("git")` returns a
+     string) — bootstrap must work or fail loudly.
+3. **Create directory tree** with `File.mkdir_p!/1`:
    ```
    <path>/
    <path>/knowledge/
+   <path>/experts/
    <path>/archive/
    <path>/runtime/staging/
-   <path>/runtime/locks/
+   <path>/runtime/mailboxes/
    <path>/runtime/interrupts/
    <path>/runtime/events/
    <path>/cache/
    <path>/projects/
    <path>/.obsidian/
    <path>/.obsidian/snippets/
-   <path>/.obsidian/plugins/
+   <path>/.obsidian/plugins/dataview/
    ```
+   `runtime/` itself is created but `daemon.sock`, `daemon.lock`, and
+   `daemon.pid` are **not** — the running daemon creates them on
+   boot. Init creates only the containing directories.
 4. **Materialise the embedded `.obsidian/` template.** Each template
-   file lives in the Mnemosyne source tree at `templates/obsidian/` and
-   is embedded into the binary via `include_str!("../templates/obsidian/<file>")`.
-   `init` writes each verbatim to its target. Same self-containment
-   pattern B uses for prompts.
+   file is embedded into the daemon release at compile time via
+   `@external_resource` + `File.read!/1` from `priv/obsidian/`. Init
+   writes each verbatim to its target. Same self-containment pattern
+   sub-B uses for phase prompts and `fixed-memory/` after the
+   Session-12 rewrite.
 5. **Write `mnemosyne.toml`** with the marker table:
    ```toml
    [vault]
    schema_version = 1
-   created = "<RFC3339 UTC timestamp>"
-   created_by_version = "<env!(\"CARGO_PKG_VERSION\")>"
+   created = "<RFC3339 UTC via DateTime.utc_now() |> DateTime.to_iso8601()>"
+   created_by_version = "<Mix.Project.config()[:version] embedded at compile time>"
    ```
-6. **Write `.gitignore`** with the tracked-vs-gitignored policy from A5:
+6. **Write minimal `daemon.toml`** with the stable-schema stub:
+   ```toml
+   [daemon]
+   log_level = "info"
+
+   [harnesses.claude_code]
+   # v1 default adapter; sub-O adds more in v1.5+
+   enabled = true
+   ```
+   Sub-F owns this file's full schema. A ships just enough to make
+   the daemon boot cleanly against a fresh vault.
+7. **Write minimal `routing.ex`** with the no-route stub shown in A4.
+8. **Write empty `plan-catalog.md`** with the machine-owned header
+   shown in A4.
+9. **Write `.gitignore`** with the tracked-vs-gitignored policy from
+   A5:
    ```
    /runtime/
    /cache/
@@ -278,38 +518,39 @@ Step-by-step:
    /.obsidian/workspace-mobile.json
    /.obsidian/cache
    ```
-7. **Initialise git, stage, commit.** Three sequential `git` calls:
-   `init`, `add .` (safe here because the vault is brand-new and
-   contains only files we just created), `commit -m "Initialize
-   Mnemosyne vault"`. Each call hard-errors if it fails — no v0.1.0-style
-   best-effort silent ignore.
-8. **Update user config.** Atomic write of
-   `~/.config/mnemosyne/config.toml` (or platform equivalent) with
-   `vault = "<absolute-path>"`. If a user config already exists pointing
-   elsewhere, do **not** overwrite — print a notice instead:
-   > Vault created at `<path>`. Your user config still points at
-   > `<other-vault>`. Run `mnemosyne config use-vault <path>` to switch,
-   > or set `MNEMOSYNE_VAULT=<path>`.
-9. **Print success** with next-step hints:
-   ```
-   ✓ Mnemosyne vault initialised at /Users/antony/Mnemosyne-vault
-   ✓ User config updated to point at the new vault
+10. **Initialise git, stage, commit.** Three sequential `git` calls
+    via `System.cmd/3`: `init`, `add .` (safe here because the vault
+    is brand-new and contains only files we just created), `commit -m
+    "Initialize Mnemosyne vault"`. Each call hard-errors if it fails
+    — no v0.1.0-style best-effort silent ignore.
+11. **Update user config.** Atomic write of
+    `~/.config/mnemosyne/config.toml` (or platform equivalent) with
+    `vault = "<absolute-path>"`. If a user config already exists
+    pointing elsewhere, do **not** overwrite — print a notice instead:
+    > Vault created at `<path>`. Your user config still points at
+    > `<other-vault>`. Run `mnemosyne config use-vault <path>` to
+    > switch, or set `MNEMOSYNE_VAULT=<path>`.
+12. **Print success** with next-step hints:
+    ```
+    ✓ Mnemosyne vault initialised at /Users/antony/Mnemosyne-vault
+    ✓ User config updated to point at the new vault
+    Next steps:
+      mnemosyne daemon                                  # start the persistent daemon
+      mnemosyne adopt-project <path-to-project>         # add a project to the vault
+      open /Users/antony/Mnemosyne-vault                # open the vault in Obsidian
+    ```
 
-   Next steps:
-     mnemosyne adopt-project <path-to-project>    # add a project to the vault
-     open /Users/antony/Mnemosyne-vault           # open the vault in Obsidian
-   ```
-
-**Atomicity:** if any step 3–7 fails, the partially-created vault
+On any step-N failure after step 3 (partially populated vault), the
 directory is **left in place** for the user to inspect. No destructive
 cleanup on our own errors. The vault is unusable until init completes
-successfully — the missing `mnemosyne.toml` ensures `verify_vault` will
-refuse to recognise it.
+successfully — the missing `mnemosyne.toml` ensures the daemon's
+`verify_vault` call at boot will refuse to recognise it.
 
-### A7. `mnemosyne init --from <git-url> [<path>]` — clone existing vault
+### A7. `mnemosyne init --from <git-url> <path>` — clone existing vault
 
-Path argument is optional, defaulting to `~/Mnemosyne-vault/` (overriding
-`git clone`'s URL-basename habit for consistency).
+Bootstrap subcommand for cloning a vault from a remote. Path argument
+is optional, defaulting to `~/Mnemosyne-vault/` (overriding `git
+clone`'s URL-basename habit for consistency).
 
 Step-by-step:
 
@@ -318,23 +559,28 @@ Step-by-step:
    on PATH; URL is non-empty.
 3. **`git clone <url> <path>`**. Failure is a hard error with git's
    stderr in the message.
-4. **Verify the clone is a Mnemosyne vault** by calling `verify_vault(<path>)`.
-   Three failure modes: marker missing ("cloned repository is not a
-   Mnemosyne vault"), parse error, schema_version higher than this
-   binary supports. **All three trigger a cleanup** —
-   `fs::remove_dir_all(<path>)` — because the clone created the
-   directory and we don't want to leave garbage behind. (Distinct from
-   fresh init's "leave it for inspection" because in the clone case
-   the directory was created entirely by us, not partially populated by
-   us.)
+4. **Verify the clone is a Mnemosyne vault** by calling
+   `verify_vault(<path>)`. Three failure modes: marker missing
+   ("cloned repository is not a Mnemosyne vault"), parse error,
+   schema_version higher than this daemon supports. **All three
+   trigger a cleanup** — `File.rm_rf!(<path>)` — because the clone
+   created the directory and we don't want to leave garbage behind.
+   (Distinct from fresh init's "leave it for inspection" because in
+   the clone case the directory was created entirely by us, not
+   partially populated by us.)
 5. **Create the gitignored runtime tree**:
-   `runtime/{staging,locks,interrupts,events}/`, `cache/`, `projects/`.
-   These are not in the cloned repo (they're gitignored) but the rest
-   of Mnemosyne expects them to exist. Same `fs::create_dir_all` block
-   as fresh init step 3 minus the directories that came in via the
-   clone.
-6. **Update user config** as in A6 step 8.
-7. **Print success** with the same next-step hints.
+   `runtime/{staging,mailboxes,interrupts,events}/`, `cache/`,
+   `projects/`. These are not in the cloned repo (they're gitignored)
+   but the rest of Mnemosyne expects them to exist. Same
+   `File.mkdir_p!` block as fresh init step 3 minus the directories
+   that came in via the clone.
+6. **Do not create `daemon.sock`/`daemon.lock`/`daemon.pid`** — those
+   belong to the running daemon, not the clone.
+7. **Update user config** as in A6 step 11.
+8. **Print success** with the same next-step hints, including a note
+   that the user must re-run `mnemosyne adopt-project` once per
+   project on this machine (the symlinks are gitignored and live in
+   `projects/`).
 
 ### A8. `mnemosyne config use-vault <path>` — switch vault
 
@@ -344,6 +590,12 @@ creates the parent directory if missing, writes the TOML atomically
 (write-temp + rename). Single-key replacement; preserves any future
 `[preferences]` sections under it.
 
+If a daemon is already running against the **old** vault at the time
+`config use-vault` is invoked, the switch **does not affect the live
+daemon** — the old daemon continues to serve the old vault until
+stopped and restarted. `config use-vault` only changes what the **next**
+daemon start resolves.
+
 ### A9. `mnemosyne adopt-project <project-path>` — mount a project
 
 Per-machine setup that compensates for the gitignored `projects/`
@@ -352,19 +604,31 @@ directory.
 1. Verify `<project-path>/mnemosyne/` exists. Hard error otherwise:
    "not a Mnemosyne-managed project; the project must have a
    `mnemosyne/` subdirectory before it can be adopted."
-2. Compute the symlink name as the lowercase basename of the project
+2. Verify `<project-path>/mnemosyne/project-root/plan-state.md`
+   exists. Hard error otherwise: "project has a `mnemosyne/` directory
+   but no root plan; run `mnemosyne daemon --init-project
+   <project-path>` first." (Sub-F owns the `--init-project` subcommand
+   that creates the initial `project-root/` with `plan-state.md`. A
+   just checks the invariant.)
+3. Compute the symlink name as the lowercase basename of the project
    directory (e.g., `APIAnyware-MacOS` → `apianyware-macos`).
-3. Resolve the active vault via the precedence chain.
-4. Create symlink `<vault>/projects/<lowercase-name> -> <abs-project-path>/mnemosyne/`.
-   Hard error if a symlink (or any file) with that name already exists.
-5. Print confirmation.
+4. Resolve the active vault via the precedence chain.
+5. Create symlink `<vault>/projects/<lowercase-name>/ -> <abs-project-path>/mnemosyne/`.
+   Hard error if a symlink (or any file) with that name already
+   exists.
+6. If a daemon is running against the active vault (detected via
+   `runtime/daemon.pid` + a liveness check via
+   `System.cmd("kill", ["-0", pid])`), send a `:rescan` NDJSON message
+   over `runtime/daemon.sock`. If no daemon is running, skip the
+   notification.
+7. Print confirmation.
 
 Symlink targets are **absolute paths** so the link survives the user
 moving cwd, but breaks if they move the project. That is acceptable: a
 moved project should be re-adopted explicitly.
 
 On a fresh clone of a vault from another machine, the user re-runs
-`adopt-project` once per project. Sub-G's migration story may produce a
+`adopt-project` once per project. Sub-G's migration story produces a
 one-shot script that loops over a list, but that is G's scope.
 
 ### A10. Tier 1 / Tier 2 root resolution
@@ -387,59 +651,87 @@ MNEMOSYNE_TIER2_ROOT=/tmp/fixture/tier2
 
 When set and non-empty, each variable bypasses the corresponding
 default derivation. Set independently. The vault discovery chain is
-still honoured for everything else (runtime/, archive/, .obsidian/);
-only the two knowledge roots are decoupled.
+still honoured for everything else (`runtime/`, `archive/`,
+`.obsidian/`, `routing.ex`, `experts/`); only the two knowledge roots
+are decoupled.
 
-Resolution function:
+Resolution function (Elixir):
 
-```rust
-pub struct ResolvedRoots {
-    pub vault: PathBuf,
-    pub tier2: PathBuf,
-    pub tier1: Option<PathBuf>,
-}
+```elixir
+defmodule Mnemosyne.Vault.Roots do
+  @enforce_keys [:vault, :tier2]
+  defstruct [:vault, :tier2, :tier1]
 
-pub fn resolve_roots(vault: PathBuf, active_plan: Option<&Path>) -> Result<ResolvedRoots> {
-    let tier2 = env_override("MNEMOSYNE_TIER2_ROOT")
-        .unwrap_or_else(|| vault.join("knowledge"));
+  @type t :: %__MODULE__{
+          vault: Path.t(),
+          tier2: Path.t(),
+          tier1: Path.t() | nil
+        }
 
-    let tier1 = if let Some(t1) = env_override("MNEMOSYNE_TIER1_ROOT") {
-        Some(t1)
-    } else if let Some(plan) = active_plan {
-        Some(derive_tier1_from_plan(plan)?)
-    } else {
-        None
-    };
+  @spec resolve(Path.t(), Path.t() | nil) :: {:ok, t()} | {:error, term()}
+  def resolve(vault, active_plan) do
+    tier2 =
+      env_override("MNEMOSYNE_TIER2_ROOT") ||
+        Path.join(vault, "knowledge")
 
-    verify_directory_exists(&tier2, "Tier 2 knowledge root")?;
-    if let Some(ref t1) = tier1 {
-        verify_directory_exists(t1, "Tier 1 knowledge root")?;
-    }
+    tier1 =
+      cond do
+        override = env_override("MNEMOSYNE_TIER1_ROOT") ->
+          override
 
-    Ok(ResolvedRoots { vault, tier2, tier1 })
-}
+        is_binary(active_plan) ->
+          derive_tier1_from_plan(active_plan)
 
-fn env_override(key: &str) -> Option<PathBuf> {
-    std::env::var(key).ok().filter(|s| !s.is_empty()).map(PathBuf::from)
-}
+        true ->
+          nil
+      end
+
+    with :ok <- verify_directory_exists(tier2, "Tier 2 knowledge root"),
+         :ok <- maybe_verify(tier1, "Tier 1 knowledge root") do
+      {:ok, %__MODULE__{vault: vault, tier2: tier2, tier1: tier1}}
+    end
+  end
+
+  defp env_override(key) do
+    case System.get_env(key) do
+      nil -> nil
+      "" -> nil
+      value -> value
+    end
+  end
+
+  defp maybe_verify(nil, _label), do: :ok
+  defp maybe_verify(path, label), do: verify_directory_exists(path, label)
+end
 ```
 
-`derive_tier1_from_plan` walks up the plan path looking for the topmost
-`mnemosyne/` ancestor that contains a `plans/` sibling, then returns
-`<that-mnemosyne-dir>/knowledge/`. If the walk fails (plan path
-malformed or not under a `mnemosyne/plans/` ancestor), hard error with
-the offending path in the message.
+`derive_tier1_from_plan/1` walks up the plan path looking for the
+topmost `mnemosyne/` ancestor that contains a `project-root/` sibling
+(i.e., the ancestor sits at `<project>/mnemosyne/project-root/...`),
+then returns `<that-mnemosyne-dir>/knowledge/`. If the walk fails
+(plan path malformed or not under a `mnemosyne/project-root/`
+ancestor), hard error with the offending path in the message.
+
+**Note the rename from the Session-7 walk-up rule**: the target
+sibling is now `project-root/`, not `plans/`. Sub-F's invariant #3 is
+the basis ("Every adopted project has exactly one `project-root/`
+directory as a direct child of `<project>/mnemosyne/`") and invariant
+#4 is the safeguard ("No plan directory at any depth is named
+`project-root` except the single reserved root"). Together they
+guarantee the walk-up terminates at the correct ancestor and never
+false-matches a nested plan named `project-root`.
 
 Optionality semantics:
 
-- **Tier 2 is required** for any command that touches global knowledge
-  (`query`, `promote`, `curate`, `status`). Hard error if
-  `<vault>/knowledge/` doesn't exist.
-- **Tier 1 is optional.** `tier1: None` means "no active plan, no
-  per-project knowledge to serve." Commands that need it (E's
-  ingestion pipeline, B's phase prompts that load Tier 1 entries into
-  staging) hard-error when `tier1.is_none()`. Commands that don't need
-  it (a global `query` from cwd `~`) proceed.
+- **Tier 2 is required** for any daemon action that touches global
+  knowledge (expert queries, ingestion Stage 5 dispatch, Level 2
+  routing agent, curation). Hard error if `<vault>/knowledge/` doesn't
+  exist at daemon boot.
+- **Tier 1 is optional.** `tier1: nil` means "no active plan path in
+  scope, no per-project knowledge to serve." PlanActor phase runners
+  resolve Tier 1 at phase-boundary time (they know their own plan
+  path); global daemon actions (Tier 2 curation, routing rule
+  compilation, catalog regeneration) do not need Tier 1.
 
 A's contract stops at "here's how to resolve the two roots given a
 vault and an optional active plan." The *content* of Tier 1 / Tier 2
@@ -449,62 +741,118 @@ brainstorm.
 
 ## Reference: vault-resolution algorithm
 
-```rust
-pub const VAULT_SCHEMA_VERSION: u32 = 1;
+```elixir
+defmodule Mnemosyne.Vault do
+  @vault_schema_version 1
 
-pub fn resolve_vault(flag: Option<&Path>) -> Result<PathBuf> {
-    let raw = if let Some(p) = flag {
-        p.to_path_buf()
-    } else if let Ok(s) = std::env::var("MNEMOSYNE_VAULT") {
-        if s.is_empty() {
-            try_user_config()?
-        } else {
-            PathBuf::from(s)
-        }
-    } else {
-        try_user_config()?
-    };
-    verify_vault(&raw)
-}
+  @spec resolve(Path.t() | nil) :: {:ok, Path.t()} | {:error, term()}
+  def resolve(flag) do
+    raw =
+      cond do
+        is_binary(flag) ->
+          flag
 
-fn try_user_config() -> Result<PathBuf> {
-    let cfg = read_user_config()?
-        .ok_or_else(|| anyhow!(
-            "no vault configured. Run 'mnemosyne init <path>' to create one, \
-             set MNEMOSYNE_VAULT, or run 'mnemosyne config use-vault <path>'."
-        ))?;
-    Ok(cfg.vault)
-}
+        env = non_empty_env("MNEMOSYNE_VAULT") ->
+          env
 
-fn verify_vault(path: &Path) -> Result<PathBuf> {
-    let abs = path.canonicalize()
-        .with_context(|| format!("vault path does not exist: {}", path.display()))?;
-    let marker_path = abs.join("mnemosyne.toml");
-    let raw = fs::read_to_string(&marker_path)
-        .with_context(|| format!(
-            "not a Mnemosyne vault (missing mnemosyne.toml): {}", abs.display()))?;
-    let marker: VaultMarker = toml::from_str(&raw)
-        .with_context(|| format!("invalid mnemosyne.toml: {}", abs.display()))?;
-    if marker.vault.schema_version > VAULT_SCHEMA_VERSION {
-        bail!(
-            "vault schema_version={} but this binary supports {}; upgrade Mnemosyne",
-            marker.vault.schema_version, VAULT_SCHEMA_VERSION
-        );
-    }
-    Ok(abs)
-}
+        true ->
+          case read_user_config() do
+            {:ok, %Mnemosyne.Vault.UserConfig{vault: path}} ->
+              path
+
+            {:ok, nil} ->
+              throw_not_configured()
+
+            {:error, reason} ->
+              throw_not_configured(reason)
+          end
+      end
+
+    verify(raw)
+  end
+
+  @spec verify(Path.t()) :: {:ok, Path.t()} | {:error, term()}
+  def verify(path) do
+    abs =
+      case File.stat(path) do
+        {:ok, _} -> Path.expand(path)
+        {:error, reason} -> raise "vault path does not exist: #{path} (#{inspect(reason)})"
+      end
+
+    marker_path = Path.join(abs, "mnemosyne.toml")
+
+    raw =
+      case File.read(marker_path) do
+        {:ok, contents} ->
+          contents
+
+        {:error, :enoent} ->
+          raise "not a Mnemosyne vault (missing mnemosyne.toml): #{abs}"
+
+        {:error, reason} ->
+          raise "cannot read mnemosyne.toml at #{abs}: #{inspect(reason)}"
+      end
+
+    case Toml.decode(raw) do
+      {:ok, %{"vault" => %{"schema_version" => v}}}
+      when is_integer(v) and v <= @vault_schema_version ->
+        {:ok, abs}
+
+      {:ok, %{"vault" => %{"schema_version" => v}}}
+      when is_integer(v) ->
+        raise "vault schema_version=#{v} but this daemon supports #{@vault_schema_version}; upgrade Mnemosyne"
+
+      {:ok, _} ->
+        raise "invalid mnemosyne.toml: #{abs}: missing [vault].schema_version"
+
+      {:error, parse_err} ->
+        raise "invalid mnemosyne.toml: #{abs}: #{inspect(parse_err)}"
+    end
+  end
+
+  defp non_empty_env(key) do
+    case System.get_env(key) do
+      nil -> nil
+      "" -> nil
+      v -> v
+    end
+  end
+end
 ```
 
 Key points:
 
-- `canonicalize()` is mandatory. It resolves symlinks and produces an
-  absolute, real path. This ensures every downstream sub-project
-  receives a consistent absolute path.
+- **`Path.expand/1` replaces the earlier Rust `canonicalize()`**. The
+  distinction matters: `Path.expand/1` resolves `..`, `~`, and
+  relative segments but does not follow symlinks. Symlink resolution
+  happens inside `File.stat/1` (which follows by default). For the
+  vault root itself A requires that the resolved path be a **real
+  directory**, not a symlink, because `<vault>/projects/<name>/`
+  symlinks are created relative to the vault root and a symlinked root
+  would make those targets ambiguous. The daemon boot sequence adds an
+  explicit `File.lstat!/1` check to reject a symlinked vault root with
+  a hard error.
 - All four error cases hard-fail with an actionable diagnostic naming
   the offending path.
-- `init` bypasses `resolve_vault` entirely — it creates rather than
-  finds. The CLI dispatch routes `Commands::Init { … }` through a
-  separate code path.
+- `init` bypasses `Mnemosyne.Vault.resolve/1` entirely — it creates
+  rather than finds. The bootstrap subcommand dispatcher routes
+  `mnemosyne init` through a separate code path.
+- The full daemon boot sequence is:
+  1. Resolve vault (this function).
+  2. Verify vault (this function).
+  3. Acquire singleton lock at `<vault>/runtime/daemon.lock` (sub-D).
+  4. Write pid file at `<vault>/runtime/daemon.pid`.
+  5. Start the OTP supervision tree (sub-F).
+  6. Bind the Unix socket at `<vault>/runtime/daemon.sock` (sub-F).
+  7. Enumerate `<vault>/projects/*/mnemosyne/project-root/` subtrees
+     and start PlanActors (sub-F).
+  8. Enumerate `<vault>/experts/*.md` and start ExpertActors (sub-N).
+  9. Load and compile `<vault>/routing.ex` (sub-F).
+  10. Regenerate `<vault>/plan-catalog.md` (sub-F).
+  11. Mark the daemon "ready" via sub-M `:telemetry` event.
+  Any failure in 1–4 is a hard error before the supervision tree
+  starts (clean exit, no garbage). Failures in 5–11 escalate through
+  OTP supervision per sub-F's restart strategy.
 
 ## Cross-sub-project contracts
 
@@ -512,124 +860,383 @@ The contracts A locks for the rest of the orchestrator merge:
 
 | Contract | Owner consuming it |
 |---|---|
-| Vault discovery = env var → user config → flag override; hard error on miss | B (executor startup), all CLI commands |
-| Vault marker = `<vault>/mnemosyne.toml` with `[vault].schema_version` | B, D |
-| Vault layout per A4 | B (`runtime/staging/`, `runtime/locks/`), D (`runtime/locks/`), E (`runtime/events/`, `<vault>/knowledge/`), F (`projects/<name>/mnemosyne/plans/`), I (`.obsidian/` template), G (per-machine `adopt-project` reruns) |
+| Vault discovery = flag → env → user config → hard error; resolved **once at daemon boot** | F (daemon boot), all bootstrap subcommands |
+| Vault marker = `<vault>/mnemosyne.toml` with `[vault].schema_version` | F, D, G |
+| Vault layout per A4 (including `daemon.toml`, `routing.ex`, `plan-catalog.md`, `experts/`, `runtime/{daemon.sock,daemon.lock,daemon.pid,mailboxes,interrupts,events,staging}`) | B (`runtime/staging/`), C (spawn CWD), D (`runtime/daemon.lock`), E (`runtime/events/`, `<vault>/knowledge/`), F (`routing.ex`, `plan-catalog.md`, `experts/`, `daemon.sock`, `mailboxes/`), I (`.obsidian/` template), G (per-machine `adopt-project` reruns, rename migration), N (`experts/` declaration format) |
+| `<project>/mnemosyne/project-root/` as F's reserved root-plan directory (replaces the earlier `plans/` container) | F (owner), G (migration), B (staging paths) |
 | Symlink target = `<vault>/projects/<lowercase-name>/ -> <project>/mnemosyne/` | F, G, I |
-| Tier 1 / Tier 2 split = derived from vault + active plan, env-var overridable | E, B |
-| Gitignore policy per A5 | D (locks must not be in git), E (events queue not in git), G |
-| `init` scaffolds an empty `knowledge/` (no axis pre-commitment) | E, future knowledge-format brainstorm |
-| `adopt-project` is the per-machine project mounting step | G |
+| Tier 1 / Tier 2 split = derived from vault + active plan, env-var overridable; walk-up looks for `mnemosyne/project-root/` ancestor | E, B, F |
+| Gitignore policy per A5 (adds `daemon.{sock,lock,pid}`, `mailboxes/` to gitignored side) | D, E, F, G |
+| `init` scaffolds empty `knowledge/`, empty `experts/`, minimal `routing.ex` stub, minimal `daemon.toml` stub, empty `plan-catalog.md` with machine-owned header | E, F, N, future knowledge-format brainstorm |
+| `adopt-project` is the per-machine project mounting step; on-live-daemon variant sends `:rescan` over `runtime/daemon.sock` | F, G |
+| Daemon singleton lock at `<vault>/runtime/daemon.lock` prevents a second `mnemosyne daemon` against the same vault | D, F |
 
-## Memory.md updates this brainstorm produces
+## Memory.md updates this amendment produces
 
-The following entries are appended/updated in
-`LLM_STATE/mnemosyne-orchestrator/memory.md`:
+The orchestrator memory.md already reflects the A5 scope expansion
+(`routing.ex`, `daemon.toml`, `plan-catalog.md`, `experts/`,
+`daemon.sock`, `mailboxes/`) via the Session-9 F commitment and the
+Session-11/12 sub-C/sub-B rewrites. No further orchestrator memory
+edits are required by this amendment beyond flipping the sub-A
+brainstorm row from "**F amendment pending**" to "**F amendment
+absorbed (Session 14, inline rewrite)**" and recording the absorption
+in the brainstorm history at the top of the doc.
 
-1. **New "Stable architectural decisions" entry:** "Vault discovery is
-   explicit: env var → user config → flag override; no walk-up; no
-   implicit dev-root concept." Names hard-errors-by-default, test
-   isolation, and Mnemosyne-as-LLM-client composition as rationale.
-2. **New "Stable architectural decisions" entry:** "Vault identity is
-   verified by `mnemosyne.toml` schema_version marker; missing or
-   wrong-version is a hard error."
-3. **Update the "Global knowledge store moves from `~/.mnemosyne/` to a
-   visible location under DEV_ROOT" entry:** strike the DEV_ROOT
-   framing, replace with "to a user-specified absolute path resolved
-   via the discovery chain (default `~/Mnemosyne-vault/`)."
-4. **New "Stable architectural decisions" entry:** "v0.1.0 has no real
-   users; legacy `~/.mnemosyne/` paths are deletable, not
-   transitionable. Sub-A produced no `migrate` command; B's
-   implementation phase deletes the v0.1.0 hardcoded paths in
-   `main.rs` and the `Config::load` call site outright."
-5. **Update the "Sub-projects" table row for A:** mark brainstorm as
-   **done 2026-04-13**, link this design doc and the sibling plan path.
-6. **New "Open questions" entry:** "Team-mode usage of Mnemosyne" — see
-   open question 6 below for the full text.
+The sub-A sibling plan's memory.md needs the following in-place
+changes:
+
+1. **Strike the "BEAM pivot amendment (unblocked)" section** and
+   replace with "BEAM pivot absorbed (Session 14, inline rewrite) —
+   see the rewritten design doc."
+2. **Strike the "Critical-path note (2026-04-15)"** — the note is now
+   stale; sub-F's Task 0 gate sees the absorption via the updated
+   orchestrator memory table row.
+3. **Update "Dependencies on sibling sub-projects"** to cite F's
+   actual commitments (project-root, routing module, plan catalog,
+   expert declarations) rather than the earlier "F may change the
+   descent invariant" hedge.
+
+The sub-A sibling plan's backlog.md needs:
+
+1. **Strike the "BEAM Pivot Notice" block** and replace with "Design
+   doc fully rewritten inline for Elixir/BEAM + sub-F commitments
+   (Session 14). Task descriptions remain as intent specifications."
+2. **Strike the "still needs an inline rewrite" paragraph** — done.
+3. **Retain Tasks 1–15 as intent specifications.** Every task
+   translates Rust idioms (cargo, serde, include_str!, clap, chrono)
+   to their Elixir equivalents per the "executing session translates"
+   rule already in the backlog header. The task list itself does not
+   need a rewrite; the design doc it cites is now authoritative.
 
 ## Non-goals (explicit)
 
 - **No migration from `~/.mnemosyne/`.** No existing usage to migrate.
-  v0.1.0 paths are deleted in B's implementation, not transitioned.
+  v0.1.0 paths are deleted in sub-G's migration, not transitioned.
 - **No walk-up dev-root discovery.** Considered and rejected. The
-  single-vault-per-machine model is a deliberate simplification.
+  single-vault-per-machine model is a deliberate simplification,
+  validated by two rounds of brainstorming and the BEAM pivot.
 - **No multi-vault management.** A user can have multiple vaults on
-  disk and switch between them via env var or `--vault`, but
-  Mnemosyne does not maintain a registry, does not have a `mnemosyne
-  vault list` command, and does not "know about" more than one at a
-  time.
+  disk and switch between them via env var or `--vault`, but Mnemosyne
+  does not maintain a registry, does not have a `mnemosyne vault list`
+  command, and does not "know about" more than one at a time.
 - **No automatic multi-machine sync.** The vault is a git repo; the
   user pushes/pulls. Conflict resolution is git's job, not
-  Mnemosyne's.
-- **No `<vault>/config.toml` overrides scaffolded at init.** The
+  Mnemosyne's. Team mode (sub-P, v2+) revisits this.
+- **No `<vault>/mnemosyne.toml` overrides scaffolded at init.** The
   optional override sections inside `mnemosyne.toml` are present only
   if the user later opts in.
+- **No default expert declarations scaffolded by A.** Sub-N's
+  brainstorm owns the default expert set; A just creates an empty
+  `experts/` directory.
 - **No Tier 2 axis pre-commitment.** `init` scaffolds an empty
   `knowledge/` directory; the axis structure is for a future
   knowledge-format brainstorm, possibly post-v1.
-- **No prompts-as-vault-data in v1.** B's embedded-prompts decision
-  stands. Prompts-as-data is a forward direction, not a v1 feature.
+- **No prompts-as-vault-data in v1.** Sub-B's compile-time-embedded
+  prompts decision (Session-12 rewrite) stands. Prompts-as-data is a
+  forward direction, not a v1 feature.
 - **No remote setup at init.** The vault has its own `.git` but no
   remote; the user adds one via plain `git remote add`.
+- **A does not own the contents of `routing.ex`, `plan-catalog.md`,
+  or `experts/*.md`.** A ships scaffolded stubs at init; sub-F and
+  sub-N own the content evolution.
+- **A does not own the daemon lifecycle, supervision, or actor
+  wiring.** Sub-F owns the daemon shape; A just guarantees vault
+  resolution and the layout the daemon expects to find at boot.
 
 ## Open questions for the implementation phase
 
-1. **What does the embedded `.obsidian/` template actually contain?** The
-   A4 list is illustrative — the implementation needs concrete file
-   contents. Probably belongs to a small "design the default Obsidian
-   template" subtask that produces the JSON files, possibly informed by
-   sub-I's "which Obsidian features cover which Mnemosyne data
-   surfaces" brainstorm if I lands first. If I has not landed yet, A's
-   implementation ships a minimal template (Dataview enabled, sensible
-   `app.json` defaults, no opinionated CSS) and I's brainstorm later
-   refines it.
+1. **What does the embedded `.obsidian/` template actually contain?**
+   The A4 list is illustrative — the implementation needs concrete
+   file contents. Probably belongs to a small "design the default
+   Obsidian template" subtask that produces the JSON files, possibly
+   informed by sub-I's "which Obsidian features cover which Mnemosyne
+   data surfaces" brainstorm if I lands first. If I has not landed
+   yet, A's implementation ships a minimal template (Dataview enabled,
+   sensible `app.json` defaults, no opinionated CSS) and I's
+   brainstorm later refines it. Unchanged by the BEAM pivot.
 2. **Should `init` validate that the parent of the target path is
    writable before doing anything?** Currently the design says "let
-   `fs::create_dir_all` fail naturally" — that produces a less-friendly
+   `File.mkdir_p!` fail naturally" — that produces a less-friendly
    error message but avoids TOCTOU races. Decide during implementation
    whether the friendlier message is worth the extra check.
 3. **Does `adopt-project` belong inside `init`'s scope or is it a
    separate feature?** A9 documents it for completeness, but it's
-   arguably its own task. Implementation phase decides whether to ship
-   it as part of the vault-discovery PR or as a follow-up.
+   arguably its own task. Implementation phase decides whether to
+   ship it as part of the vault-discovery PR or as a follow-up.
 4. **Schema migration mechanism for future `schema_version` bumps.** A
    pins `schema_version = 1` and verification refuses higher values.
-   There is no mechanism to migrate a v1 vault to v2. This is fine for
-   v1 but should be a deliberate future-design item — not A's job to
-   design now, but A's job to flag.
+   There is no mechanism to migrate a v1 vault to v2. Fine for v1 but
+   should be a deliberate future-design item — not A's job to design
+   now, but A's job to flag.
 5. **Cross-cutting observability adoption.** Per the M brainstorm
-   discipline, A's sibling implementation plan must include a stub
-   task for emitting `mnemosyne_event!` calls at vault discovery,
-   init, and `adopt-project` boundaries (resolved-vault,
-   schema-version-mismatch, marker-missing,
-   adopt-symlink-created).
-6. **Team-mode use is unanswered.** Mnemosyne is currently a
+   discipline, A's sibling implementation plan must include stub
+   tasks for emitting `Mnemosyne.Event.*` structs at vault discovery,
+   init, and `adopt-project` boundaries. Post-M-amendment, the stubs
+   are typed Elixir structs emitted via `:telemetry.execute/3` (not
+   Rust `tracing` calls). Candidate event types:
+   `Mnemosyne.Event.VaultResolved`,
+   `Mnemosyne.Event.VaultVerificationFailed`,
+   `Mnemosyne.Event.VaultInitialised`,
+   `Mnemosyne.Event.ProjectAdopted`.
+6. **What does the minimal `daemon.toml` contain?** A6 ships a
+   two-section stub (`[daemon].log_level`,
+   `[harnesses.claude_code]`). Sub-F owns the full schema. If sub-F
+   lands a more complete daemon.toml spec before A's implementation
+   executes, A's init picks up the richer stub. If not, A ships the
+   two-section minimum and F's implementation phase extends it in
+   place.
+7. **Team-mode use is unanswered.** Mnemosyne is currently a
    solo-developer tool by design and assumption. Every A decision
    reflects this: single vault per machine, single user pushes/pulls
    the vault git, sequential curation, no concurrent-edit conflict
    handling, no per-user attribution in the marker file, no identity
-   in the user config. Sub-D's locking model is also single-machine.
-   What changes when two or more developers want to share a vault?
-   Likely affects D (distributed locking semantics or pessimistic-lock
-   transitions), E (ingestion conflict handling on shared knowledge
-   writes), the curation workflow (parallel curation discipline), and
-   possibly the marker file (per-user identity attribution). Does not
-   obviously force A to revise the discovery chain or the layout — the
-   gitignore policy already separates "shared asset" from
-   "machine-local state," which is exactly the split a team workflow
-   would need. Owner: TBD; likely a future cross-cutting brainstorm of
-   its own once a team use case is concrete.
+   in the user config. Sub-P's scope (v2+) revisits this. Does not
+   block v1 implementation — the gitignore policy already separates
+   "shared asset" from "machine-local state," which is exactly the
+   split a team workflow would need.
+
+## Appendix A — Decision Trail
+
+Clarifying-question-style decision history for sub-project A. Q1–Q5
+were locked during the original Session-7 brainstorm (2026-04-13).
+Q6 is the BEAM daemon pivot (Session 9, 2026-04-14). Q7 is the
+sub-F architectural commitments that affect the vault layout
+(Session 9). Corrections are inline at the relevant question, not
+in a separate amendment layer, per the "rewrite specs inline" project
+discipline.
+
+### Q1 — Discovery model: walk-up, env-and-config, or registry?
+
+**Locked**: env-and-config precedence chain (flag → env var → user
+config → hard error). No walk-up. No registry.
+
+**Rationale**: walk-up introduces the "forgotten ancestor
+`Mnemosyne-vault/`" footgun. A registry duplicates state that the
+filesystem already expresses. The precedence chain is trivially
+testable with a single env-var override and composes cleanly with
+future daemon spawns of internal harness sessions.
+
+**Session-14 correction**: unchanged. The BEAM pivot only changes
+*how often* the chain runs (once per daemon boot vs. once per CLI
+invocation), not *what* it resolves.
+
+### Q2 — Init flow: single command with `--from` flag, or two subcommands?
+
+**Locked**: single `mnemosyne init` command with an optional `--from
+<git-url>` flag that switches between fresh scaffold and clone
+semantics.
+
+**Rationale**: keeps the user-facing surface small and mirrors `git
+init` / `git clone` naming conventions. The flag switch is cleaner
+than two nearly-identical subcommands.
+
+**Session-14 correction**: unchanged. `init` is now a *bootstrap
+subcommand* (runs outside the daemon supervision tree) rather than a
+standalone binary, but the flag-based clone semantics are identical.
+
+### Q3 — Gitignore policy: opt-in or opt-out; what's tracked by default?
+
+**Locked**: tracked-by-default subset is `mnemosyne.toml`,
+`.gitignore`, curated `.obsidian/`, `knowledge/`, `archive/`.
+Everything under `runtime/`, `cache/`, `projects/` is gitignored.
+
+**Rationale**: tracks the "shared asset" surface (global knowledge,
+vault identity, Obsidian template); excludes the "machine-local
+state" surface (runtime, cache, symlinks). Users get a `git
+push`-able vault from day one.
+
+**Session-14 correction**: expanded the tracked side with four new
+surfaces (`daemon.toml`, `routing.ex`, `plan-catalog.md`,
+`experts/*.md`) committed by sub-F's Session-9 brainstorm. Expanded
+the gitignored side with five new runtime surfaces (`daemon.sock`,
+`daemon.lock`, `daemon.pid`, `mailboxes/`, `interrupts/`). The
+opt-out principle is unchanged; the set of files the principle
+applies to grew.
+
+### Q4 — Migration scope: transition `~/.mnemosyne/` or delete outright?
+
+**Locked**: delete outright. v0.1.0 has no real users; migration
+code is bureaucratic overhead with no benefit. Sub-G owns the
+deletion site.
+
+**Rationale**: "no real users" is a one-shot license to skip
+migration scaffolding. Every `~/.mnemosyne/` reference becomes
+dead code at G's cutover.
+
+**Session-14 correction**: the scope of "v0.1.0 code to delete"
+grew from "hardcoded `~/.mnemosyne/` paths in `main.rs` and
+`Config::load` in `src/config.rs`" to "the entire Rust CLI binary"
+when the BEAM pivot landed. Sub-A's amendment does not change this
+— G's cutover deletes the Rust codebase wholesale.
+
+### Q5 — Identity verification: dotfile marker or parseable config?
+
+**Locked**: parseable TOML `mnemosyne.toml` with a schema-versioned
+`[vault]` table. Human-readable, forward-compat, shares a file with
+optional overrides.
+
+**Rationale**: dotfiles hide from Obsidian's file tree, which is
+load-bearing for the "humans can explore everything" discipline. A
+TOML marker is visible, parseable, and mirrors `Cargo.toml`'s
+"project marker + config" shape users already know.
+
+**Session-14 correction**: unchanged. Swapping `serde+toml` for
+Elixir's `Toml` library does not change the schema or the shape of
+the parseable marker. `mix.exs` happens to be Elixir's "project
+marker + config" file, reinforcing the ecosystem analogy.
+
+### Q6 — BEAM daemon pivot: how does vault discovery survive the runtime swap?
+
+**Added Session 14** (absorbing Session 9's F commitment).
+
+**Decision**: vault discovery remains a **pure function from CLI
+args + environment + user config to an absolute path**, independent
+of runtime language. The only changes are:
+
+- It runs **once per daemon boot**, not once per CLI invocation. All
+  internal actors read from a single `Mnemosyne.Vault` GenServer.
+- The implementation swaps Rust's `dirs::config_dir()` for Elixir's
+  `:filename.basedir(:user_config, "mnemosyne")`; swaps
+  `serde::Deserialize` for the `Toml` library's decode; swaps
+  `PathBuf` for `Path.t()`; swaps `anyhow::Result` for `{:ok, _} |
+  {:error, _}` tuples or `raise` for truly exceptional cases.
+- `Path.expand/1` replaces `canonicalize()` with an added
+  `File.lstat!/1` symlink-rejection check at the vault root (see
+  "Reference: vault-resolution algorithm").
+- All bootstrap subcommands (`init`, `adopt-project`, `config
+  use-vault`, `init --from`) are short-lived escript-style entry
+  points that do not start the OTP supervision tree.
+- A second `mnemosyne daemon` against the same vault is blocked by
+  sub-D's singleton lock at `<vault>/runtime/daemon.lock`.
+
+**Rationale**: every Session-7 decision survives the language swap
+because none of them were language-specific. The "discovery is one
+pure function" framing is stable across any runtime; the "identity
+via TOML marker" framing is stable across any TOML parser. The pivot
+strengthens the "single source of truth per daemon" model because
+all actors now read from one GenServer rather than re-resolving per
+CLI invocation.
+
+### Q7 — Sub-F commitments: what vault-layout additions and renames does A absorb?
+
+**Added Session 14** (absorbing Session 9's F commitment and
+Session 11 sub-C + Session 12 sub-B rewrites).
+
+**Decision**: A's vault layout picks up the following changes,
+all tracked in A4:
+
+**New at vault root (tracked in git):**
+- `daemon.toml` — F's daemon config file. A scaffolds a two-section
+  stub at init.
+- `routing.ex` — F's user-editable routing module. A scaffolds a
+  no-route stub at init.
+- `plan-catalog.md` — F's auto-regenerated vault catalog. A scaffolds
+  a machine-owned header with zero entries at init; the daemon writes
+  the full catalog on first boot.
+- `experts/` — F's expert declarations directory. A scaffolds empty;
+  sub-N's brainstorm provides the default expert declaration files.
+
+**New under `runtime/` (gitignored):**
+- `daemon.sock` — F's Unix socket for TUI/Obsidian/web clients. Bound
+  by the daemon at boot, not at init.
+- `daemon.lock` — D's singleton lock (collapsed scope). Acquired at
+  daemon boot.
+- `daemon.pid` — F's running-daemon pid file. Written at daemon boot;
+  used by bootstrap subcommands to decide whether to send `:rescan`.
+- `mailboxes/<qualified-id>.jsonl` — F's actor mailboxes. Directory
+  created at init; individual mailbox files created by actors.
+
+**Renamed/collapsed:**
+- `<project>/mnemosyne/plans/` → `<project>/mnemosyne/project-root/`
+  per F's "project-root as reserved plan directory" commitment. A's
+  symlink target is still `<project>/mnemosyne/` (the container), so
+  the rename does not change A's symlink shape. The change only
+  affects A's `derive_tier1_from_plan/1` walk-up logic, which now
+  searches for `mnemosyne/project-root/` instead of `mnemosyne/plans/`.
+- `runtime/locks/<plan-id>.lock` → `runtime/daemon.lock` (singleton).
+  Sub-D's scope collapsed because OTP mailbox serialization inside
+  PlanActor GenServers handles per-plan ordering.
+
+**Rationale**: every addition follows the "A owns the vault-layout
+stable contract; sibling sub-projects own the contents" discipline.
+A does not design routing rules, catalog regeneration, expert
+declaration formats, or mailbox wire formats — it just guarantees
+the directory exists at the expected path and is tracked or
+gitignored per A5. F's commitments compose cleanly with A's
+Session-7 decisions; no Q1–Q5 answer had to change.
+
+## Appendix B — `mix.exs` deps projection
+
+The deps sub-A introduces to the daemon's `mix.exs`:
+
+```elixir
+{:toml, "~> 0.7"}          # TOML parser for mnemosyne.toml + daemon.toml
+```
+
+Everything else sub-A needs is in the Elixir/OTP standard library or
+already pulled in by other sub-projects:
+
+- `File.*`, `Path.*`, `System.*`, `DateTime.*` — stdlib
+- `:filename.basedir/2` — stdlib (`:filename` module)
+- `:telemetry.execute/3` — sub-M dep, already declared
+- `Mnemosyne.Event.*` structs — sub-M module namespace
+
+No Rust-side crates. The earlier brainstorm's Cargo.toml projection
+(`dirs`, `serde`, `toml`, `chrono`, `scopeguard`) is retired.
+
+## Appendix C — Glossary (post-amendment)
+
+- **Vault** — the user-chosen directory holding `mnemosyne.toml` and
+  the layout in A4. Resolved once per daemon boot.
+- **Vault marker** — `<vault>/mnemosyne.toml` with a `[vault]` table.
+- **Vault root symlink rule** — the vault root itself must be a real
+  directory, not a symlink. `<vault>/projects/*/` symlinks are fine
+  (and expected).
+- **`project-root/`** — sub-F's reserved plan-directory name for the
+  single root plan of each adopted project.
+- **`mnemosyne.toml` vs `daemon.toml`** — identity + vault-format
+  overrides vs. daemon runtime knobs. Two separate files.
+- **Bootstrap subcommand** — `init`, `init --from`, `config
+  use-vault`, `adopt-project`. Short-lived escript-style entry points
+  that do not start the OTP supervision tree.
+- **`Mnemosyne.Vault` GenServer** — the single source of truth for
+  the resolved vault path while the daemon is running. Every actor
+  reads from it; no actor re-runs the discovery chain.
+- **`rescan` message** — the NDJSON message a bootstrap subcommand
+  sends to a running daemon over `<vault>/runtime/daemon.sock` after
+  mutating the vault (e.g., after `adopt-project` created a new
+  symlink).
+- **Singleton daemon lock** — sub-D's collapsed-scope lock file at
+  `<vault>/runtime/daemon.lock`. One daemon per vault, enforced by
+  flock-equivalent on the file.
 
 ## Origin
 
-Brainstormed 2026-04-13 as the work-phase task for sub-project A in the
-Mnemosyne orchestrator plan. Followed the `superpowers:brainstorming`
-skill's clarifying-question / approach-proposal / section-by-section
-flow. Five forking decisions were locked through clarifying questions
-(discovery model, init flow shape, gitignore policy, migration scope,
-identity verification), then five design sections were presented for
+Brainstormed 2026-04-13 as the work-phase task for sub-project A in
+the Mnemosyne orchestrator plan. Followed the
+`superpowers:brainstorming` skill's clarifying-question /
+approach-proposal / section-by-section flow. Five forking decisions
+(Q1–Q5) were locked through clarifying questions (discovery model,
+init flow shape, gitignore policy, migration scope, identity
+verification), then five design sections were presented for
 section-by-section approval (layout, discovery, init, Tier 1 / Tier 2
 addressability, cross-sub-project contracts). One mid-design correction
 (symlink target) was applied and then walked back when the existing
-memory.md framing was re-checked. The final design lands cleanly with
-no contradictions to B / E / M's prior decisions.
+memory.md framing was re-checked. The final Session-7 design landed
+cleanly with no contradictions to B / E / M's prior decisions.
+
+**Amended Session 14 (2026-04-15)** to absorb the BEAM daemon pivot
+(Session 9) and sub-F's architectural commitments (Session 9:
+`project-root/`, `routing.ex`, `plan-catalog.md`, `experts/`, Unix
+socket client protocol, path-based qualified IDs) plus the consequent
+scope collapse of sub-D. The amendment is an inline rewrite — §A1–§A10
+are re-cast in place, the reference algorithm is rewritten in Elixir,
+the cross-sub-project contracts table is updated, and the decision
+trail is preserved in Appendix A with Q6 (BEAM pivot) and Q7 (sub-F
+commitments) recording the amendment substance. No Q1–Q5 answer had
+to change: the discovery model, init flow, gitignore principle,
+migration scope, and identity verification all survive the runtime
+swap unchanged in spirit. **No supersede-amendment layer; no stale
+Rust content under a disclaimer.** The rewrite follows the precedent
+set by sub-C (Session 11, 1186 lines) and sub-B (Session 12, 2296
+lines).

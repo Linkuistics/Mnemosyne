@@ -11,17 +11,55 @@ functions → template authoring → commands → v0.1.0 deletion →
 observability stub → tests → docs. The work phase picks the best next
 task with input from the user.
 
-## BEAM Pivot Notice
+## BEAM pivot + sub-F commitments absorbed (Session 14, inline rewrite)
 
-**All tasks below were authored assuming a Rust CLI.** The orchestrator's
-Session 9 committed Mnemosyne to a persistent BEAM daemon (Elixir/OTP)
-and the Rust CLI is retired. See `memory.md § BEAM pivot amendment` for
-the full translation guide. Task descriptions remain as intent
-specifications; the executing session translates Rust-specific idioms
-(cargo, serde, include_str!, clap, etc.) to Elixir/OTP equivalents.
-Tasks 11 and 12 (v0.1.0 Rust cleanup) are substantially reduced in
-scope — they become verification that old hardcoded paths are not
-carried into the Elixir daemon.
+The orchestrator's Session 9 committed Mnemosyne to a persistent BEAM
+daemon (Elixir/OTP) and sub-F locked the architectural commitments
+(`project-root/`, `routing.ex`, `plan-catalog.md`, `experts/`, Unix
+socket client protocol, daemon singleton lock collapsing sub-D's
+per-plan-lock scope). Sub-A's design doc was rewritten inline in
+Session 14 (2026-04-15) to absorb both pivots — see
+`specs/2026-04-13-sub-A-global-store-design.md` for the authoritative
+Elixir-native spec, and `memory.md § BEAM pivot + sub-F commitments
+absorbed` for the net-change summary.
+
+**All tasks below were authored assuming a Rust CLI.** Task
+descriptions remain as **intent specifications**; the executing
+session translates Rust-specific idioms (cargo, serde, include_str!,
+clap, chrono, scopeguard) to Elixir/OTP equivalents per the rewritten
+design doc:
+
+- `serde::Deserialize` / `toml` → the `Toml` hex package
+  (`{:toml, "~> 0.7"}`)
+- `include_str!` → `@external_resource` + `File.read!/1` from `priv/`
+- `dirs::config_dir()` → `:filename.basedir(:user_config, "mnemosyne")`
+- `PathBuf` → `Path.t()`
+- `anyhow::Result` → `{:ok, _} | {:error, _}` tuples or `raise` for
+  hard errors
+- `fs::create_dir_all` → `File.mkdir_p!/1`
+- `chrono::DateTime<Utc>` → `DateTime.t()` /
+  `DateTime.utc_now() |> DateTime.to_iso8601()`
+- `cargo test` / `cargo clippy` → `mix test` / `mix dialyzer`
+- `scopeguard` → `on_exit/1` in ExUnit setup blocks
+
+**Layout additions Tasks 7 (init) and 8 (clone) must scaffold**, beyond
+what the original Session-7 design listed:
+
+- Tracked at vault root: `daemon.toml` (two-section stub),
+  `routing.ex` (no-route stub), `plan-catalog.md` (machine-owned
+  header, zero entries), empty `experts/` directory.
+- Gitignored under `runtime/`: `mailboxes/` directory only — the
+  daemon creates `daemon.sock`, `daemon.lock`, `daemon.pid` at boot,
+  not at init.
+- `<project>/mnemosyne/plans/` is gone. A's symlink target is still
+  `<project>/mnemosyne/` (the container); the rename only affects
+  Task 5's walk-up logic, which now searches for
+  `mnemosyne/project-root/` instead of `mnemosyne/plans/`.
+
+**Tasks 11 and 12 (v0.1.0 Rust cleanup) reduce to verification** that
+the Elixir daemon does not carry over the old hardcoded `~/.mnemosyne/`
+paths or YAML config — full Rust CLI deletion is sub-G's migration
+scope, not sub-A's.
 
 ## Task Backlog
 

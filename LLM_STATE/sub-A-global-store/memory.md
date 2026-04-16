@@ -63,12 +63,21 @@ project coding-style guides — the test suite drives implementation.
   ingestion event queue and consumes both Tier 1 / Tier 2 roots for
   routing. Same dependency shape as D — A scaffolds the directories, E
   lands after.
-- **Sub-project F**: A's `derive_tier1_from_plan` walks up from a plan
-  path to find the project root. F owns plan hierarchy semantics and
-  must preserve the invariant that every plan path has a
-  `mnemosyne/plans/` ancestor. If F's hierarchy design changes the
-  marker-file rule or the descent invariant, the walk-up logic must be
-  revisited.
+- **Sub-project F** (Session 9, locked): F committed `project-root/`
+  as the reserved root-plan directory under `<project>/mnemosyne/`,
+  replacing the earlier `plans/` container. A's
+  `derive_tier1_from_plan/1` walks up looking for the topmost
+  `mnemosyne/project-root/` ancestor and returns
+  `<that-mnemosyne-dir>/knowledge/`. F's invariants #3 ("every
+  adopted project has exactly one `project-root/` directly under
+  `<project>/mnemosyne/`") and #4 ("no plan at any depth is named
+  `project-root` except the reserved root") guarantee termination
+  and non-false-match. F also adds four tracked files at the vault
+  root that A scaffolds at init (`daemon.toml`, `routing.ex`,
+  `plan-catalog.md`, empty `experts/`), plus the gitignored
+  `runtime/{daemon.sock,daemon.lock,daemon.pid,mailboxes/}` set.
+  The vault root must remain a real directory, not a symlink — A's
+  `verify_vault` adds an `lstat` check at boot.
 - **Sub-project G**: consumes `mnemosyne adopt-project` as the
   per-machine project mounting step. G's migration scripts loop over a
   project list and invoke this command once per project.
@@ -82,32 +91,51 @@ project coding-style guides — the test suite drives implementation.
   own their own sibling adoption stubs" discipline, the stubs are
   authored now rather than deferred to M's adoption wave.
 
-## BEAM pivot amendment (unblocked)
+## BEAM pivot + sub-F commitments absorbed (Session 14, inline rewrite)
 
 The orchestrator's Session 9 committed Mnemosyne to a persistent BEAM
-daemon (Elixir/OTP). Sub-A's backlog was brainstormed assuming a Rust
-CLI. The following changes apply to every task in the backlog:
+daemon (Elixir/OTP) and sub-F locked the architectural commitments
+(`project-root/`, `routing.ex`, `plan-catalog.md`, `experts/`, Unix
+socket client protocol, path-based qualified IDs, daemon singleton
+lock collapsing sub-D's per-plan-lock scope). Sub-A's design doc was
+rewritten inline in Session 14 (2026-04-15) to absorb both pivots
+following the sub-C/sub-B precedent — see the rewritten
+`specs/2026-04-13-sub-A-global-store-design.md`. Q1–Q5 are preserved
+in Appendix A with correction notes; Q6 (BEAM pivot) and Q7 (sub-F
+commitments) record the amendment substance.
 
-- **`verify_vault` caller changes:** called by the Elixir daemon at
-  startup (not per-invocation Rust CLI). The config discovery precedence
-  chain is unchanged.
-- **`init`/`adopt` become daemon subcommands:** they are no longer
-  standalone Rust CLI commands.
-- **v0.1.0 path deletion tasks are moot:** Tasks 11 and 12 targeted
-  Rust code in `src/main.rs` and `src/config.rs`. The entire Rust CLI
-  is retired, so those tasks become "verify the Elixir daemon does not
-  carry over the old hardcoded paths" rather than Rust refactoring work.
-- **Implementation language:** all new code is Elixir/OTP, not Rust.
-  References to `cargo test`, `cargo clippy`, `include_str!`, `serde`,
-  `chrono`, `scopeguard`, `clap`, and Rust-specific idioms throughout
-  the backlog task descriptions should be read as intent specifications
-  (the *what*), not literal implementation instructions (the *how*).
-  The executing session translates to Elixir equivalents.
-- **Template embedding:** `include_str!` becomes Elixir's `priv/`
-  directory or `Application.app_dir/2` equivalent.
+**Net change to A4 vault layout:**
 
-This amendment is currently unblocked. Five amendment tasks (A, B, D, E,
-M) can run in parallel per the orchestrator.
+- New tracked at vault root: `daemon.toml`, `routing.ex`,
+  `plan-catalog.md`, `experts/`.
+- New gitignored under `runtime/`: `daemon.sock`, `daemon.lock`,
+  `daemon.pid`, `mailboxes/<qualified-id>.jsonl`.
+- `<project>/mnemosyne/plans/` → `<project>/mnemosyne/project-root/`
+  (no change to A's symlink target — still
+  `<vault>/projects/<name>/ -> <project>/mnemosyne/`).
+- `runtime/locks/<plan-id>.lock` → singleton `runtime/daemon.lock`.
+
+**Net change to A6 init flow:** init scaffolds the new tracked files
+with minimal stubs (no-route `routing.ex`, two-section `daemon.toml`,
+machine-owned-header `plan-catalog.md`, empty `experts/`). The
+running daemon creates `daemon.sock`, `daemon.lock`, `daemon.pid` at
+boot, not at init.
+
+**Net change to A10 walk-up:** `derive_tier1_from_plan/1` searches
+for the topmost `mnemosyne/project-root/` ancestor, not
+`mnemosyne/plans/`. F's invariants #3 and #4 guarantee termination
+and non-false-match.
+
+**Implementation language:** all new code is Elixir/OTP. Backlog
+tasks remain as intent specifications — `include_str!` becomes
+`@external_resource` + `File.read!/1`; `serde` becomes the `Toml`
+hex package; `dirs::config_dir()` becomes
+`:filename.basedir(:user_config, "mnemosyne")`; `PathBuf` becomes
+`Path.t()`; `anyhow::Result` becomes `{:ok, _} | {:error, _}` or
+`raise` for hard errors. Tasks 11 and 12 reduce to "verify the
+Elixir daemon does not carry over the old hardcoded paths" rather
+than Rust refactoring work. The full Rust CLI is retired by sub-G's
+migration scope.
 
 ## Open questions
 
