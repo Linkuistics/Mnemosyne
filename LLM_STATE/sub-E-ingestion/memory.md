@@ -88,6 +88,17 @@ sub-E as follows:
 This amendment is tracked in the orchestrator's backlog as one of five
 parallel amendment tasks (A, B, D, E, M) currently unblocked.
 
+**Concrete `Ingestion.*` event structs available (Session 15, 2026-04-15).**
+Sub-M's design doc §4.1 was rewritten inline as part of its Elixir pivot. It
+now defines the sealed `Mnemosyne.Event.*` struct set, which includes six
+concrete `Ingestion.*` variants grouped under sub-E's producer section:
+`Ingestion.Applied`, `Ingestion.PromptRequired`, `Ingestion.Deferred`,
+`Ingestion.Rejected`, `Ingestion.ResearchSession`, `Ingestion.CycleSummary`.
+These are the definitive shapes for the F amendment's event-channel re-cast —
+sub-E must emit these sealed structs, not define its own. See sub-M's spec at
+`{{PROJECT}}/docs/superpowers/specs/2026-04-13-sub-M-observability-design.md`
+§4.1 for the field-level definitions.
+
 ## Implementation strategy
 
 **Phase ordering.** Build deterministic stages first (1, 2, 5 with all six
@@ -140,6 +151,30 @@ ship slow. Do not optimise session spawn until measurements justify it.
   expert personas, retrieval strategies, knowledge curation logic, and the
   default expert set. Sub-E must define the Query message contract that
   experts consume.
+
+  **Sub-N Task 15 (early-deliverable PR, now unblocked for sub-E coding):**
+  Sub-N's brainstorm (Session 16, 2026-04-15) produced concrete interface
+  contracts that sub-E's Stage 5 amendment codes against:
+  - `ScopeMatcher` behaviour — tag-based exact-string set intersection on
+    frontmatter `tags:` fields; determines which experts receive a candidate
+  - `%ExpertAbsorbCandidate{}` — the message struct sub-E sends to each
+    tag-matched ExpertActor
+  - Verdict structs: `READY ABSORB`, `READY REJECT`,
+    `READY CROSS_LINK <expert-id>`
+  - Event structs: `%ExpertConflict{}` and other `%Expert.*` variants that
+    surface contentious multi-expert outcomes for human review
+
+  **Three key Stage 5 design decisions from sub-N brainstorm (binding on sub-E):**
+  1. **Orphan candidates** (zero tag-matching experts) write directly to
+     `<vault>/knowledge/uncategorized/` via sub-E — no expert fan-out at all.
+  2. **`READY CROSS_LINK <expert-id>`** means rejection-with-suggestion; sub-E's
+     collector does a second-round dispatch to the suggested expert
+     non-recursively (max depth 2 total — one initial dispatch + one
+     cross-link re-dispatch).
+  3. **Physical duplication** is accepted when multiple experts absorb the same
+     candidate; provenance frontmatter carries the matching `ingestion-event-id`
+     to link duplicates. Sub-E must write this field into every dispatched
+     `%ExpertAbsorbCandidate{}`.
 - **Sub-project F (hierarchy + actors)** — owns the `Actor` behaviour,
   message types (Dispatch/Query), and vault catalog. Stage 5's expert
   dispatch uses F's Query message infrastructure.

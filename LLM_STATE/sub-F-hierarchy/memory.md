@@ -162,6 +162,19 @@ F emits `%ActorStateChange{}`, `%MessageRouted{}`, `%RuleFired{}`,
 `%RuleSuggestion{}`, and `%DispatchProcessed{}` / `%QueryAnswered{}`
 structs at the boundary. M owns the transport and subscribers.
 
+### Depended on by sub-N (added 2026-04-15)
+
+F's `Mnemosyne.Actor` behaviour (Task 2) and `ActorSupervisor`
+child-spec API (Task 5) are on the **critical path for sub-N Phase 5+**.
+Sub-N's internal Task 0 is an explicit gate: sub-N Tasks 16+
+(ExpertActor implementation) cannot start until F has shipped both
+interfaces. Sub-N Tasks 1–15 are independent and can run immediately.
+The authoritative ExpertActor spec (persona format, ScopeMatcher,
+retrieval strategies, message/event structs) lives at
+`{{PROJECT}}/docs/superpowers/specs/2026-04-15-sub-N-domain-experts-design.md`
+and must be consulted when Task 3's stub is replaced. **Prioritise
+delivering Tasks 2 and 5 early** so sub-N's Phase 5 is not delayed.
+
 ### Depends on (not yet landed at F's scaffolding time)
 
 Implementation of F **cannot start** until the downstream task lists

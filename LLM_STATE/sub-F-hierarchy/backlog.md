@@ -30,10 +30,12 @@ yet; Task 0 is the gate.
      been rewritten against the Session-11 design-doc rewrite
      (pipes-only erlexec, session GenServer, tool-call boundary in
      §4.5).
-  3. Sub-A's amendment task in the orchestrator backlog has been
-     absorbed into `specs/2026-04-13-sub-A-global-store-design.md`.
-  4. Sub-M's amendment task in the orchestrator backlog has been
-     absorbed into `specs/2026-04-13-sub-M-observability-design.md`.
+  3. ~~Sub-A's amendment task in the orchestrator backlog has been
+     absorbed into `specs/2026-04-13-sub-A-global-store-design.md`.~~
+     **CLEARED** — completed in orchestrator Session 14 (2026-04-15).
+  4. ~~Sub-M's amendment task in the orchestrator backlog has been
+     absorbed into `specs/2026-04-13-sub-M-observability-design.md`.~~
+     **CLEARED** — completed in orchestrator Session 15 (2026-04-15).
   Also re-read F's §11 against the latest versions of those three
   design docs to confirm every consumed interface still matches.
   Any mismatch discovered here rewrites F's design doc inline
@@ -71,6 +73,14 @@ yet; Task 0 is the gate.
   supervision integration. Keep the callback set minimal — anything
   specific to PlanActor or ExpertActor goes in the respective
   implementation modules, not this behaviour.
+- **Critical-path note (2026-04-15):** This task (together with Task 5
+  `ActorSupervisor`) is on the critical path for sub-N. Sub-N's
+  internal Task 0 is an explicit gate: sub-N Tasks 16+
+  (ExpertActor implementation) cannot start until F has shipped the
+  `Mnemosyne.Actor` behaviour **and** the `ActorSupervisor`
+  child-spec API. Sub-N Tasks 1–15 are independent of F and can run
+  immediately; sub-N Phase 5+ is blocked on F delivering these two
+  interfaces. Prioritise Tasks 2 and 5 to avoid delaying sub-N.
 - **Results:** _pending_
 
 ### Task 3 — `Mnemosyne.ExpertActor` stub `[foundation]`
@@ -83,6 +93,15 @@ yet; Task 0 is the gate.
   dispatch processor can wire against ExpertActor targets before
   sub-N lands. Do not implement persona / retrieval / scope logic
   here — that is sub-N's scope.
+- **Stub-replacement reference (2026-04-15):** When sub-N lands and
+  this stub is replaced by a full implementation, the authoritative
+  spec for ExpertActor's internals (persona format, ScopeMatcher,
+  retrieval strategies, message structs, event structs) is
+  `{{PROJECT}}/docs/superpowers/specs/2026-04-15-sub-N-domain-experts-design.md`.
+  The stub replacement is not free-form — it must conform to that
+  design doc. Sub-N Task 15 (early-deliverable PR) and Tasks 16+
+  implement the actual ExpertActor; this Task 3 only provides the
+  typed shell.
 - **Results:** _pending_
 
 ### Task 4 — `Mnemosyne.PlanActor` wrapping sub-B's `PhaseRunner` `[foundation]`
@@ -110,6 +129,12 @@ yet; Task 0 is the gate.
   functions. Children are started lazily on first message to a
   qualified ID; idle actors may be stopped to reclaim memory (v1
   policy: no idle eviction — simpler).
+- **Critical-path note (2026-04-15):** Together with Task 2, this task
+  gates sub-N Phase 5+. Sub-N's ExpertActor (Tasks 16+) calls
+  `ActorSupervisor.start_expert_actor/1` directly; until this
+  child-spec API exists sub-N cannot wire its GenServer into the
+  supervision tree. Ship Tasks 2 and 5 before sub-N reaches its
+  internal Task 0 gate.
 - **Results:** _pending_
 
 ### Task 6 — `Mnemosyne.Router.Server` + mailbox NDJSON + cursor `[foundation]`
