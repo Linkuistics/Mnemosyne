@@ -150,7 +150,7 @@ Adoption tasks landed by M's brainstorm session:
 |---|---|---|
 | `sub-B-phase-cycle` | landed by brainstorm | "Adopt sub-M observability framework — phase lifecycle instrumentation + TUI bridge consumer" |
 | `sub-C-adapters` | landed by brainstorm | "Adopt sub-M observability framework — actor instrumentation + parallel-emit migration of `SpawnLatencyReport`" |
-| `sub-E-ingestion` | landed by brainstorm | "Adopt sub-M observability framework — parallel-emit `MnemosyneEvent::Ingestion` alongside existing `IngestionEvent` channel" |
+| `sub-E-ingestion` | landed by brainstorm | "Adopt sub-M observability framework — verify schema: sub-E emits directly to the M bus using the `%Mnemosyne.Event.Ingestion.*{}` structs from §4.1; no parallel-emit step needed; adoption task is to verify the emitted structs match §4.1 definitions when sub-E implementation begins" |
 | `sub-N-domain-experts` | landed by learning (Session 16, 2026-04-15) | backlog Task 24 — absorb `Mnemosyne.Event.Expert.*` six-struct group into §4.1 sealed set + eight §6 metric definitions; gated on sub-N Task 15 early-deliverable PR |
 
 Adoption tasks queued for sibling plans that don't yet exist:

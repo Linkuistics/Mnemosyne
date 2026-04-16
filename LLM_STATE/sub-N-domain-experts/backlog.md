@@ -304,6 +304,14 @@ sub-F's 28 tasks to be done — F can ship those early as its first PR).
   lets sub-E's amendment task run in parallel with sub-N's remaining
   tasks (16+). The PR does NOT include `ExpertActor` itself — that's
   Task 16. Document the public API surface sub-E can rely on.
+- **Note:** Sub-E's design doc was rewritten inline in Session 17
+  (2026-04-16). That rewrite consumed and locked in the following
+  contract shapes — Task 15's output **must match them exactly**:
+  `%Mnemosyne.Message.ExpertAbsorbCandidate{}` struct fields,
+  `Mnemosyne.Expert.ScopeMatcher.match_candidate/2` signature,
+  the three verdict variants `:absorb` / `:reject` /
+  `:cross_link_suggested`, and `%Mnemosyne.Event.Expert.Conflict{}`.
+  Do not alter these shapes without coordinating with sub-E.
 - **Results:** _pending_
 
 ---

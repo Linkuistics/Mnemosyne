@@ -21,6 +21,76 @@ amendment task below makes this explicit.
 
 ## Task Backlog
 
+> **Top-notice (2026-04-16, Session 17 inline rewrite).** The design doc has
+> been rewritten inline across §1–§5 + Decision Trail for Elixir/OTP and
+> Stage 5 dispatch-to-experts, following the sub-A/sub-B/sub-C/sub-M
+> precedent. The authoritative spec is now
+> `docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md` (fully
+> re-cast). **Implementation tasks below still carry pre-pivot Rust framing
+> and must not be executed as written — see Task 0 (rewrite gate) below.**
+
+### Task 0 — Rewrite implementation task list against Session-17 design doc `[gate]`
+- **Status:** not_started
+- **Dependencies:** Session-17 inline rewrite (**done, 2026-04-16**);
+  follows the sub-B, sub-C, and sub-M sibling-plan gate task pattern
+- **Description:** The Session-17 amendment rewrote the design doc inline,
+  clearing the orchestrator-level amendment task. The downstream task list
+  (all tasks below) still carries pre-pivot Rust framing (`Vec<Section>`,
+  `tokio mpsc`, trait objects, `IngestionEvent` channel, `SafeFileWriter`
+  as a Rust struct, Rust `KnowledgeStore` trait, etc.) and blocks the sub-E
+  v1 implementation runway. Rewrite all implementation tasks to target the
+  Session-17 design doc at
+  `docs/superpowers/specs/2026-04-12-sub-E-ingestion-design.md`
+  (now fully re-cast for Elixir/BEAM + Stage 5 expert dispatch) before
+  picking up any implementation task.
+
+  **Checklist for the rewrite.**
+  1. **Replace Rust type definitions (current "Define core ingestion types"
+     task).** Elixir structs with `@enforce_keys` and typespecs replace
+     Rust structs. `Vec<T>` becomes lists. `tokio mpsc` channel becomes
+     sub-M's `Mnemosyne.Event.*` bus (no standalone `IngestionEvent`
+     channel — the parallel-emit window collapses to zero per sub-M's
+     adoption matrix). `trait KnowledgeStore` becomes an Elixir behaviour.
+  2. **Re-cast pipeline stage tasks.** Stages 1–4 logic is unchanged but
+     the implementation language is Elixir. `GenStage` or `Broadway`
+     replaces tokio channel wiring. Rust iterator idioms become Elixir
+     `Enum`/`Stream` pipelines. References to Rust crate setup are
+     replaced with `mix.exs` dependency management.
+  3. **Re-cast Stage 5 task.** Stage 5 no longer performs direct store
+     writes. It dispatches candidate entries as `%ExpertAbsorbCandidate{}`
+     messages to tag-matched ExpertActors via `ScopeMatcher.match_candidate/2`
+     (sub-N Task 15 interface). Rules 1–4 and 6 gate what gets dispatched;
+     experts handle the actual write. Orphan candidates (zero tag-matching
+     experts) write to `<vault>/knowledge/uncategorized/` via
+     `SafeFileWriter` (now an Elixir module). Verdict handling: `READY
+     ABSORB`, `READY REJECT`, `READY CROSS_LINK <expert-id>` (max depth 2).
+  4. **Re-cast `SafeFileWriter` task.** Now an Elixir module enforcing the
+     §3 Rule 6 invariants. Same invariants; Elixir implementation.
+  5. **Re-cast event channel task.** Sub-E emits directly to sub-M's sealed
+     `Mnemosyne.Event.*` bus using the six `%Ingestion.*{}` variants
+     (`Applied`, `PromptRequired`, `Deferred`, `Rejected`, `ResearchSession`,
+     `CycleSummary`) defined in sub-M's §4.1. No standalone E-internal
+     channel. Plus the new `%Ingestion.OrphanCandidate{}` struct for the
+     uncategorized write path.
+  6. **Re-cast harness adapter task.** `HarnessAdapter` behaviour (Elixir)
+     replaces the Rust trait. `FixtureAdapter` replays from NDJSON fixture
+     files (aligning with sub-C's NDJSON-over-stdio transport).
+  7. **Wire `Mnemosyne.ReflectExitHook` entry point.** Add a task for
+     implementing the `on_reflect_exit(context)` callback that sub-B's
+     §4.2 behaviour requires. This is Stage 5's trigger entry point; it
+     calls `ingestion_fired_setter` at Stage 5 start and composes the full
+     `run_ingestion_cycle/1` pipeline under `Task.Supervisor`.
+  8. **Update dependency listings.** Every task's Dependencies field should
+     reference Elixir module names and sub-N Task 15 interface contracts,
+     not Rust crate paths or trait objects.
+  9. **Retire the sub-M adoption task as written.** The `[m-adoption]`
+     task below mirrors the pre-pivot parallel-emit pattern. With the
+     inline rewrite, sub-E emits directly to sub-M's bus from Stage 5 — no
+     parallel-emit window. Replace it with a verification/smoke-test task
+     confirming the six `%Ingestion.*{}` variants round-trip correctly
+     through sub-M's `RingBuffer` and `JsonlWriter`.
+- **Results:** _pending_
+
 ### Adopt sub-N Task 15 interface contracts — Stage 5 fan-out types `[amendment]`
 - **Status:** not_started
 - **Dependencies:** none (sub-N Task 15 ships as an early-deliverable PR independently of sub-N Tasks 16+; sub-E can code against these types immediately)
