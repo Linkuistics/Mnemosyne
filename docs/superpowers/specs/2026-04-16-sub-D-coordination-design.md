@@ -121,14 +121,23 @@ reason (SIGKILL, OOM, panic, clean shutdown). No stale-lock-file cleanup is
 needed. This is the primary reason for choosing `flock` over
 `O_CREAT | O_EXCL` (which requires PID-liveness checks on stale files).
 
-### §2.5 Separate PID file in vault
+### §2.5 No separate PID file
 
-`<vault>/runtime/daemon.pid` remains a separate file per sub-A's layout.
-Written atomically (temp-then-rename) after the lock is acquired. Bootstrap
-subcommands (`adopt-project`, `rescan`) read `daemon.pid` to decide whether
-to send `:rescan` over the Unix socket — they check the vault-local PID file,
-not the system-wide lock. The PID file is a per-vault diagnostic/routing
-convenience for subcommands that already know which vault they target.
+`<vault>/runtime/daemon.pid` is **removed** from sub-A's vault layout. It
+is redundant: the system-wide lock file contains both the PID and the vault
+path. Bootstrap subcommands (`adopt-project`, `rescan`) read the system-wide
+lock file to determine whether a daemon is running for their target vault:
+
+1. Read `<runtime_dir>/mnemosyne/daemon.lock` (advisory `flock` does not
+   prevent reads by other processes).
+2. Parse PID and vault path from the file content.
+3. If vault path matches the target vault → daemon is running; send
+   `:rescan` over `<vault>/runtime/daemon.sock`.
+4. If vault path does not match, or the file is absent/empty → no daemon
+   is serving this vault.
+
+This eliminates a duplicate source of truth and one fewer file in the vault's
+`runtime/` directory.
 
 ### §2.6 Elixir implementation
 
@@ -323,7 +332,7 @@ D locks the following contracts for sibling consumption:
 
 | Contract | Consumers |
 |---|---|
-| System-wide daemon singleton lock at `<runtime_dir>/mnemosyne/daemon.lock` via `flock(2)`, acquired at boot step 3, released on process death. Not inside the vault — invisible to Obsidian. | F (boot sequence), A (removes `daemon.lock` from vault layout) |
+| System-wide daemon singleton lock at `<runtime_dir>/mnemosyne/daemon.lock` via `flock(2)`, acquired at boot step 3, released on process death. Contains PID + vault path. Not inside the vault — invisible to Obsidian. | F (boot sequence), A (removes `daemon.lock` and `daemon.pid` from vault layout) |
 | `Mnemosyne.FileIO.read_tracked/1` and `write_safe/3` as the mandatory file I/O layer for all daemon reads and writes to plan and knowledge files | B (`copy_back/2`), E (`SafeFileWriter`), F (plan-catalog), N (expert absorb writes) |
 | `Mnemosyne.Coordination.FreshnessTracker` ETS table keyed by absolute path, recording SHA-256 content hashes | FileIO (internal), M (diagnostic events) |
 | Three file categories (`:exclusive`, `:phase_owned`, `:human_editable`) with defined conflict strategies per §3.1 | B, E, F, N |
@@ -353,11 +362,22 @@ D locks the following contracts for sibling consumption:
 - Sub-E's existing atomic temp-then-rename is subsumed by `FileIO` — remove
   the duplicate implementation.
 
+### On sub-A (global store)
+
+- Remove `runtime/daemon.lock` and `runtime/daemon.pid` from vault layout
+  (§A4). Both are replaced by the system-wide lock file.
+- Boot sequence step 4 ("Write pid file at `<vault>/runtime/daemon.pid`")
+  is deleted. Steps 3–4 collapse to a single step: "Acquire system-wide
+  singleton lock via `Mnemosyne.Coordination.SingletonLock.acquire/1`."
+
 ### On sub-F (hierarchy, router, daemon)
 
 - Boot sequence step 3 calls `Mnemosyne.Coordination.SingletonLock.acquire/1`.
+  Step 4 (pid file) is eliminated — the lock file contains the PID.
 - `plan-catalog.md` writes use `FileIO.write_safe/3` with `:exclusive`.
 - Routing rule suggestion commits use `VaultGit.commit/3`.
+- Bootstrap subcommands read the system-wide lock file (not a vault-local
+  pid file) to determine whether to send `:rescan`.
 
 ### On sub-N (domain experts)
 
@@ -466,8 +486,16 @@ System-wide chosen. The lock file lives at `<runtime_dir>/mnemosyne/daemon.lock`
 is undesirable; (2) v1 enforces single-daemon-per-machine via sub-A's
 single-vault discovery, so a system-wide lock is the correct scope. The lock
 file contains both the PID and the vault path being served, so contention
-errors are fully informative. `daemon.pid` stays in `<vault>/runtime/` for
-per-vault bootstrap subcommand routing.
+errors are fully informative.
+
+### Q1b. Separate daemon.pid file?
+
+Eliminated. The system-wide lock file contains both the PID and the vault
+path, making a separate `<vault>/runtime/daemon.pid` redundant. Bootstrap
+subcommands read the lock file to determine whether a daemon is serving
+their target vault — they get PID and vault path in one read. This removes
+a duplicate source of truth and simplifies sub-A's boot sequence (steps 3–4
+collapse to a single lock-acquisition step).
 
 ### Q2. File-system watcher vs content-hash for external-modification detection?
 
